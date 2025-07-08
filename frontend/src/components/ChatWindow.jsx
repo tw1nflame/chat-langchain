@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import MessageList from './MessageList'
 import ChatInput from './ChatInput'
+import { sendMessage } from '../api/chat'
 
 // Генерация UUID v4
 function generateUUID() {
@@ -22,35 +23,61 @@ function ChatWindow({ chat, onUpdateMessages }) {
     )
   }
 
-  const handleSendMessage = (content, files) => {
+  const handleSendMessage = async (content, files) => {
     if (isLoading) return // Блокируем отправку если уже загружается
     
-    setIsLoading(true) // Устанавливаем состояние загрузки
-    
-    // Создаем сообщение пользователя
+    // Сразу добавляем сообщение пользователя
     const userMessage = {
       id: generateUUID(),
       role: 'user',
-      content,
-      files,
+      content: content,
+      files: files.map(file => ({
+        name: file.name,
+        size: file.size,
+        type: file.type
+      })) || [],
       timestamp: new Date()
     }
     
-    const updatedMessages = [...chat.messages, userMessage]
-    onUpdateMessages(chat.id, updatedMessages)
-
-    // Симуляция ответа ассистента
-    setTimeout(() => {
+    // Обновляем состояние с сообщением пользователя
+    const messagesWithUser = [...chat.messages, userMessage]
+    onUpdateMessages(chat.id, messagesWithUser)
+    
+    setIsLoading(true) // Устанавливаем состояние загрузки
+    
+    try {
+      // Отправляем сообщение пользователя и получаем оба сообщения
+      const response = await sendMessage(chat.id, content, files)
+      
+      // Создаем сообщение ассистента
       const assistantMessage = {
+        id: response.assistantMessage.id,
+        role: response.assistantMessage.role,
+        content: response.assistantMessage.content,
+        files: response.assistantMessage.files || [],
+        timestamp: new Date(response.assistantMessage.created_at)
+      }
+      
+      // Добавляем сообщение ассистента к уже существующим сообщениям
+      const finalMessages = [...messagesWithUser, assistantMessage]
+      onUpdateMessages(chat.id, finalMessages)
+    } catch (error) {
+      console.error('Ошибка при отправке сообщения:', error)
+      
+      // В случае ошибки добавляем сообщение об ошибке
+      const errorMessage = {
         id: generateUUID(),
         role: 'assistant',
-        content: 'Спасибо за ваше сообщение! Это демонстрационный ответ ассистента.',
+        content: 'Извините, произошла ошибка при отправке сообщения. Попробуйте еще раз.',
+        files: [],
         timestamp: new Date()
       }
       
-      onUpdateMessages(chat.id, [...updatedMessages, assistantMessage])
+      const errorMessages = [...messagesWithUser, errorMessage]
+      onUpdateMessages(chat.id, errorMessages)
+    } finally {
       setIsLoading(false) // Сбрасываем состояние загрузки
-    }, 1000)
+    }
   }
 
   // Проверяем, есть ли сообщения в чате

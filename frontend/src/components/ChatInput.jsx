@@ -7,10 +7,20 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false }) {
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    if ((message.trim() || files.length > 0) && !isLoading) {
-      onSendMessage(message.trim(), files)
-      setMessage('')
-      setFiles([])
+    
+    const trimmedMessage = message.trim()
+    
+    // Проверяем, что есть либо текст, либо файлы
+    if ((trimmedMessage || files.length > 0) && !isLoading) {
+      // Если нет текста, но есть файлы, добавляем сообщение по умолчанию
+      const messageToSend = trimmedMessage || (files.length > 0 ? `Отправлено файлов: ${files.length}` : '')
+      
+      if (messageToSend) {
+        onSendMessage(messageToSend, files)
+        setMessage('')
+        // НЕ очищаем файлы - они остаются для следующего сообщения
+        // setFiles([])
+      }
     }
   }
 
@@ -35,31 +45,49 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false }) {
       <div className="max-w-3xl mx-auto p-4">
         {/* Прикрепленные файлы */}
         {files.length > 0 && (
-          <div className="mb-3 flex flex-wrap gap-2">
-            {files.map((file, index) => (
-              <div key={index} className="flex items-center gap-2 bg-gray-100 px-3 py-1 rounded-full text-sm">
-                <svg 
-                  width="14" 
-                  height="14" 
-                  viewBox="0 0 24 24" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  strokeWidth="2" 
-                  strokeLinecap="round" 
-                  strokeLinejoin="round"
-                  className="text-gray-600"
-                >
-                  <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                </svg>
-                <span className="truncate max-w-32">{file.name}</span>
-                <button
-                  onClick={() => removeFile(index)}
-                  className="text-gray-500 hover:text-red-500 ml-1"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+          <div className="mb-3">
+            {/* Заголовок с кнопкой очистки */}
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-gray-600">
+                Прикреплено файлов: {files.length}
+              </span>
+              <button
+                onClick={() => setFiles([])}
+                disabled={isLoading}
+                className="text-xs text-red-500 hover:text-red-700 disabled:text-gray-400"
+              >
+                Очистить все
+              </button>
+            </div>
+            
+            {/* Список файлов */}
+            <div className="flex flex-wrap gap-2">
+              {files.map((file, index) => (
+                <div key={index} className="flex items-center gap-2 bg-gray-100 px-3 py-1 rounded-full text-sm">
+                  <svg 
+                    width="14" 
+                    height="14" 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    strokeWidth="2" 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round"
+                    className="text-gray-600"
+                  >
+                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                  </svg>
+                  <span className="truncate max-w-32">{file.name}</span>
+                  <button
+                    onClick={() => removeFile(index)}
+                    disabled={isLoading}
+                    className="text-gray-500 hover:text-red-500 ml-1 disabled:text-gray-400"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -105,9 +133,11 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false }) {
               placeholder={
                 isLoading 
                   ? "Ожидание ответа..." 
-                  : centered 
-                    ? "Задайте ваш вопрос..." 
-                    : "Напишите сообщение..."
+                  : files.length > 0
+                    ? "Добавьте описание к файлам (необязательно)..."
+                    : centered 
+                      ? "Задайте ваш вопрос..." 
+                      : "Напишите сообщение..."
               }
               disabled={isLoading}
               className={`flex-1 resize-none border-0 outline-none max-h-32 min-h-[24px] ${

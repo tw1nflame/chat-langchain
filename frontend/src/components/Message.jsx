@@ -1,5 +1,43 @@
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+
 function Message({ message }) {
   const isUser = message.role === 'user'
+
+  // Функция для получения иконки файла по типу
+  const getFileIcon = (fileName, fileType) => {
+    const extension = fileName.split('.').pop()?.toLowerCase()
+    
+    if (fileType?.includes('json') || extension === 'json') {
+      return (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14,2 14,8 20,8"/>
+          <path d="M10 12h4"/>
+          <path d="M10 16h4"/>
+        </svg>
+      )
+    }
+    
+    if (fileType?.includes('text') || extension === 'txt') {
+      return (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14,2 14,8 20,8"/>
+          <line x1="9" y1="9" x2="15" y2="9"/>
+          <line x1="9" y1="13" x2="15" y2="13"/>
+          <line x1="9" y1="17" x2="13" y2="17"/>
+        </svg>
+      )
+    }
+    
+    // Дефолтная иконка файла
+    return (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+      </svg>
+    )
+  }
 
   return (
     <div className={`mb-6 ${isUser ? 'flex justify-end' : ''}`}>
@@ -9,36 +47,48 @@ function Message({ message }) {
           ? 'bg-blue-500 text-white' 
           : 'bg-white border border-gray-200'
       }`}>
-        <p className={`whitespace-pre-wrap ${isUser ? 'text-white text-right' : 'text-gray-800'}`}>
-          {message.content}
-        </p>
+        {/* Содержимое сообщения */}
+        {isUser ? (
+          <p className="text-white text-right whitespace-pre-wrap">
+            {message.content}
+          </p>
+        ) : (
+          <div className="prose max-w-none text-gray-800">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {message.content}
+            </ReactMarkdown>
+          </div>
+        )}
         
         {/* Прикрепленные файлы */}
         {message.files && message.files.length > 0 && (
           <div className={`mt-3 pt-3 border-t ${isUser ? 'border-blue-400' : 'border-gray-200'}`}>
             <div className={`text-xs mb-2 ${isUser ? 'text-blue-100' : 'text-gray-500'}`}>
-              Прикрепленные файлы:
+              {isUser ? 'Прикрепленные файлы:' : 'Файлы от ассистента:'}
             </div>
             {message.files.map((file, index) => (
-              <div key={index} className="flex items-center gap-2 text-sm">
-                <svg 
-                  width="16" 
-                  height="16" 
-                  viewBox="0 0 24 24" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  strokeWidth="2" 
-                  strokeLinecap="round" 
-                  strokeLinejoin="round"
-                  className={isUser ? 'text-blue-200' : 'text-gray-500'}
-                >
-                  <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                </svg>
-                <span className={isUser ? 'text-blue-100' : 'text-gray-600'}>
-                  {file.name}
-                </span>
+              <div key={index} className="flex items-center gap-2 text-sm mb-1">
+                <div className={isUser ? 'text-blue-200' : 'text-gray-500'}>
+                  {getFileIcon(file.name, file.type)}
+                </div>
+                
+                {/* Если есть download_url, делаем файл скачиваемым */}
+                {file.download_url ? (
+                  <a 
+                    href={`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001'}${file.download_url}`}
+                    download={file.name}
+                    className={`hover:underline ${isUser ? 'text-blue-100 hover:text-white' : 'text-blue-600 hover:text-blue-800'}`}
+                  >
+                    {file.name}
+                  </a>
+                ) : (
+                  <span className={isUser ? 'text-blue-100' : 'text-gray-600'}>
+                    {file.name}
+                  </span>
+                )}
+                
                 <span className={`text-xs ${isUser ? 'text-blue-200' : 'text-gray-500'}`}>
-                  ({(file.size / 1024).toFixed(1)} KB)
+                  ({file.size ? (file.size / 1024).toFixed(1) : '0'} KB)
                 </span>
               </div>
             ))}
