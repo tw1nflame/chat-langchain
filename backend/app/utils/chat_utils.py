@@ -154,7 +154,7 @@ async def send_webhook_request2(user_message: str, user_files: List[Dict[str, An
     webhook_logger.info(f"Sending webhook request with {len(payload['files'])} files")
     
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=540.0) as client:
             response = await client.post(
                 webhook_url,
                 json=payload,
@@ -301,13 +301,22 @@ async def process_files_from_response(response_item: Dict[str, Any], chat_id: st
     chat_dir = ensure_chat_directory(chat_id)
     processed_files = []
     
-    for i, file_base64 in enumerate(response_item['files']):
+    for i, file_data in enumerate(response_item['files']):
         try:
+            # Проверяем, является ли файл объектом с именем и содержимым или просто base64 строкой
+            if isinstance(file_data, dict) and 'name' in file_data and 'content' in file_data:
+                # Новый формат: файл с именем и содержимым
+                file_name = file_data['name']
+                file_base64 = file_data['content']
+            else:
+                # Старый формат: просто base64 строка
+                file_name = f"forecast_result_{i + 1}.xlsx"
+                file_base64 = file_data
+            
             # Декодируем base64 файл
             file_content = base64.b64decode(file_base64)
             
-            # Генерируем имя файла 
-            file_name = f"forecast_result_{i + 1}.xlsx"  # Excel файл с результатами прогноза
+            # Путь для сохранения файла
             file_path = os.path.join(chat_dir, file_name)
             
             # Сохраняем файл асинхронно
@@ -316,11 +325,22 @@ async def process_files_from_response(response_item: Dict[str, Any], chat_id: st
             
             app_logger.info(f"Saved file: {file_name}, size: {len(file_content)} bytes")
             
+            # Определяем MIME тип по расширению файла
+            file_type = "application/octet-stream"  # По умолчанию
+            if file_name.endswith('.xlsx'):
+                file_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            elif file_name.endswith('.csv'):
+                file_type = "text/csv"
+            elif file_name.endswith('.txt'):
+                file_type = "text/plain"
+            elif file_name.endswith('.json'):
+                file_type = "application/json"
+            
             # Добавляем информацию о файле
             processed_files.append({
                 "name": file_name,
                 "size": len(file_content),
-                "type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "type": file_type,
                 "chat_id": chat_id,
                 "download_url": f"/api/v1/files/{chat_id}/{file_name}"
             })
