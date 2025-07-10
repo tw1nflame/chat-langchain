@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import Sidebar from './components/Sidebar'
+// import Sidebar from './components/Sidebar' // Временно закомментировано
 import ChatWindow from './components/ChatWindow'
 
 // Генерация UUID v4
@@ -12,25 +12,21 @@ function generateUUID() {
 }
 
 function App() {
-  // Структура чатов с UUID и сообщениями в формате ChatGPT
+  // Создаем один единственный чат без предварительных сообщений
   const [chats, setChats] = useState(() => {
     const initialChats = {}
-    const chatId1 = generateUUID()
-    const chatId2 = generateUUID()
+    const defaultChatId = generateUUID()
     
-    initialChats[chatId1] = {
-      id: chatId1,
-      title: 'Общение с ассистентом',
-      messages: [
-        {
-          id: generateUUID(),
-          role: 'assistant',
-          content: 'Привет! Я готов помочь вам с любыми вопросами.',
-          timestamp: new Date()
-        }
-      ],
+    initialChats[defaultChatId] = {
+      id: defaultChatId,
+      title: 'Чат с ассистентом',
+      messages: [], // Пустой массив сообщений для отображения приветственной формы
       createdAt: new Date()
     }
+    
+    // Закомментированные дополнительные чаты
+    /*
+    const chatId2 = generateUUID()
     
     initialChats[chatId2] = {
       id: chatId2,
@@ -51,12 +47,15 @@ function App() {
       ],
       createdAt: new Date(Date.now() - 120000)
     }
+    */
     
     return initialChats
   })
   
   const [activeChat, setActiveChat] = useState(() => Object.keys(chats)[0])
 
+  // Закомментированные функции для работы с несколькими чатами
+  /*
   const createNewChat = () => {
     const newChatId = generateUUID()
     const newChat = {
@@ -69,6 +68,7 @@ function App() {
     setChats(prev => ({ ...prev, [newChatId]: newChat }))
     setActiveChat(newChatId)
   }
+  */
 
   const updateChatMessages = (chatId, messages) => {
     setChats(prev => ({
@@ -88,12 +88,15 @@ function App() {
 
   return (
     <div className="flex h-screen bg-gray-50">
+      {/* Временно закомментирован сайдбар */}
+      {/*
       <Sidebar 
         chats={chats}
         activeChat={activeChat}
         onChatSelect={setActiveChat}
         onNewChat={createNewChat}
       />
+      */}
       <ChatWindow 
         chat={currentChat}
         onUpdateMessages={updateChatMessages}

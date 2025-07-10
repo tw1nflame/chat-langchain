@@ -86,16 +86,16 @@ function ChatWindow({ chat, onUpdateMessages }) {
   if (isEmpty) {
     // Пустой чат - форма по центру с приветствием
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8">
+      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-white">
         <div className="max-w-2xl w-full text-center mb-8">
-          <h1 className="text-3xl font-semibold text-gray-800 mb-4">
-            Чем я могу вам помочь?
+          <h1 className="text-4xl font-semibold text-gray-800 mb-4">
+            Чем вам помочь?
           </h1>
-          <p className="text-gray-600 mb-8">
-            Задайте любой вопрос или начните новый разговор
+          <p className="text-lg text-gray-600 mb-8">
+            Задайте любой вопрос, загрузите файлы или начните новый разговор
           </p>
         </div>
-        <div className="w-full max-w-3xl">
+        <div className="w-full max-w-4xl">
           <ChatInput onSendMessage={handleSendMessage} centered={true} isLoading={isLoading} />
         </div>
       </div>
