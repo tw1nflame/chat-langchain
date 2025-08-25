@@ -14,6 +14,7 @@ function generateUUID() {
 
 function ChatWindow({ chat, onUpdateMessages }) {
   const [isLoading, setIsLoading] = useState(false)
+  const [persistentFiles, setPersistentFiles] = useState([])
 
   if (!chat) {
     return (
@@ -25,6 +26,11 @@ function ChatWindow({ chat, onUpdateMessages }) {
 
   const handleSendMessage = async (content, files) => {
     if (isLoading) return // Блокируем отправку если уже загружается
+    
+    // Сохраняем файлы для следующего сообщения если они были отправлены
+    if (files && files.length > 0) {
+      setPersistentFiles(files)
+    }
     
     // Сразу добавляем сообщение пользователя
     const userMessage = {
@@ -80,6 +86,10 @@ function ChatWindow({ chat, onUpdateMessages }) {
     }
   }
 
+  const handleClearFiles = () => {
+    setPersistentFiles([])
+  }
+
   // Проверяем, есть ли сообщения в чате
   const isEmpty = chat.messages.length === 0
 
@@ -96,7 +106,13 @@ function ChatWindow({ chat, onUpdateMessages }) {
           </p>
         </div>
         <div className="w-full max-w-4xl">
-          <ChatInput onSendMessage={handleSendMessage} centered={true} isLoading={isLoading} />
+          <ChatInput 
+            onSendMessage={handleSendMessage} 
+            centered={true} 
+            isLoading={isLoading} 
+            persistentFiles={persistentFiles}
+            onClearFiles={handleClearFiles}
+          />
         </div>
       </div>
     )
@@ -106,7 +122,13 @@ function ChatWindow({ chat, onUpdateMessages }) {
   return (
     <div className="flex-1 flex flex-col">
       <MessageList messages={chat.messages} />
-      <ChatInput onSendMessage={handleSendMessage} centered={false} isLoading={isLoading} />
+      <ChatInput 
+        onSendMessage={handleSendMessage} 
+        centered={false} 
+        isLoading={isLoading} 
+        persistentFiles={persistentFiles}
+        onClearFiles={handleClearFiles}
+      />
     </div>
   )
 }

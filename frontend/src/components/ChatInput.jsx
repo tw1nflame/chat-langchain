@@ -1,9 +1,16 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
-function ChatInput({ onSendMessage, centered = false, isLoading = false }) {
+function ChatInput({ onSendMessage, centered = false, isLoading = false, persistentFiles = [], onClearFiles }) {
   const [message, setMessage] = useState('')
   const [files, setFiles] = useState([])
   const fileInputRef = useRef(null)
+
+  // Синхронизируем локальные файлы с persistent файлами
+  useEffect(() => {
+    if (persistentFiles.length > 0) {
+      setFiles(persistentFiles)
+    }
+  }, [persistentFiles])
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -18,8 +25,7 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false }) {
       if (messageToSend) {
         onSendMessage(messageToSend, files)
         setMessage('')
-        // НЕ очищаем файлы - они остаются для следующего сообщения
-        // setFiles([])
+        // Файлы остаются - не очищаем их здесь
       }
     }
   }
@@ -52,7 +58,12 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false }) {
                 Прикреплено файлов: {files.length}
               </span>
               <button
-                onClick={() => setFiles([])}
+                onClick={() => {
+                  setFiles([])
+                  if (onClearFiles) {
+                    onClearFiles()
+                  }
+                }}
                 disabled={isLoading}
                 className="text-xs text-red-500 hover:text-red-700 disabled:text-gray-400"
               >
