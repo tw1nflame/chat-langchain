@@ -8,14 +8,24 @@ class FileData(BaseModel):
     size: int
     type: Optional[str] = None
     download_url: Optional[str] = None  # URL для скачивания файла
+    owner_id: Optional[str] = None
+    fileId: Optional[str] = None
+    message_id: Optional[str] = None
+    id: Optional[str] = None
 
 # Схемы для чатов
 class ChatCreate(BaseModel):
     title: Optional[str] = None
+    owner_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     id: str
     title: str
+    owner_id: Optional[str] = None
+    last_message: Optional[str] = None
+    last_message_role: Optional[str] = None
+    first_message: Optional[str] = None
+    first_message_role: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     
@@ -30,6 +40,7 @@ class MessageResponse(BaseModel):
     content: str
     files: Optional[List[FileData]] = []
     created_at: datetime
+    owner_id: Optional[str] = None
     
     class Config:
         from_attributes = True

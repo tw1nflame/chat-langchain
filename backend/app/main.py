@@ -1,10 +1,17 @@
+
+# Загрузка переменных окружения из .env
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-import os
 from api.chat import router as chat_router
 from core.config import settings
 from core.logging_config import app_logger
+from core.database import engine, Base
+from core.config import settings
 
 app = FastAPI(
     title="Chat API",
@@ -28,6 +35,17 @@ if os.path.exists(static_dir):
 
 # Роуты
 app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
+
+
+@app.on_event("startup")
+def startup_create_tables():
+    try:
+        if settings.create_tables_on_startup:
+            app_logger.info("create_tables_on_startup is True — creating missing tables if any")
+            Base.metadata.create_all(bind=engine)
+            app_logger.info("Database tables ensured (create_all completed)")
+    except Exception as e:
+        app_logger.error(f"Error creating tables on startup: {e}")
 
 @app.get("/")
 async def root():

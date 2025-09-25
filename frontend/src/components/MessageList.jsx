@@ -1,11 +1,19 @@
-import { useEffect, useRef } from 'react'
-import Message from './Message'
+"use client"
+
+import { useEffect, useRef } from "react"
+import Message from "./Message"
 
 function MessageList({ messages }) {
   const messagesEndRef = useRef(null)
 
+  // Debug: log messages array on render
+  try {
+    // eslint-disable-next-line no-console
+    console.debug("[MessageList] render messages count:", messages?.length, messages)
+  } catch (e) {}
+
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
   useEffect(() => {

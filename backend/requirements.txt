@@ -8,3 +8,5 @@ python-dotenv==1.0.0
 python-multipart==0.0.6
 aiofiles
 httpx
+minio
+psycopg2-binary

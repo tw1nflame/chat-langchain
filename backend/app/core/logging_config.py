@@ -1,16 +1,12 @@
-"""
-Конфигурация логгирования для приложения
+"""Configuration for application logging.
+Writes logs to STDOUT/STDERR instead of files for container-friendly behavior.
 """
 
 import logging
 import logging.handlers
-import os
+import sys
 from datetime import datetime
 from pathlib import Path
-
-# Создаем директорию для логов
-LOGS_DIR = Path(__file__).parent.parent.parent / "logs"
-LOGS_DIR.mkdir(exist_ok=True)
 
 def setup_logging():
     """
@@ -22,72 +18,38 @@ def setup_logging():
     
     # Убираем существующие хендлеры
     logger.handlers.clear()
-    
+
     # Формат логов
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-    
-    # Хендлер для ротации файлов (хранение за 7 дней)
-    file_handler = logging.handlers.TimedRotatingFileHandler(
-        filename=LOGS_DIR / "chat_app.log",
-        when='D',  # Ротация каждый день
-        interval=1,  # Интервал в 1 день
-        backupCount=7,  # Хранить файлы за 7 дней
-        encoding='utf-8',
-        utc=False
-    )
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.INFO)
-    
-    # Хендлер для консоли (отключен для продакшена)
-    # console_handler = logging.StreamHandler()
-    # console_handler.setFormatter(formatter)
-    # console_handler.setLevel(logging.INFO)
-    
-    # Добавляем хендлеры
-    logger.addHandler(file_handler)
-    # logger.addHandler(console_handler)  # Отключаем консольный вывод
-    
-    # Логгер для webhook'ов
+
+    # Console handler for stdout (general info/debug)
+    console_handler = logging.StreamHandler(stream=sys.stdout)
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.INFO)
+
+    logger.addHandler(console_handler)
+
+    # Логгер для webhook'ов -> stdout as well
     webhook_logger = logging.getLogger("webhook")
     webhook_logger.setLevel(logging.DEBUG)
-    
-    # Отдельный файл для webhook логов
-    webhook_file_handler = logging.handlers.TimedRotatingFileHandler(
-        filename=LOGS_DIR / "webhook.log",
-        when='D',
-        interval=1,
-        backupCount=7,
-        encoding='utf-8',
-        utc=False
-    )
-    webhook_file_handler.setFormatter(formatter)
-    webhook_file_handler.setLevel(logging.DEBUG)
-    
-    webhook_logger.addHandler(webhook_file_handler)
-    # webhook_logger.addHandler(console_handler)  # Отключаем консольный вывод
-    
-    # Логгер для ошибок
+    webhook_logger.handlers.clear()
+    webhook_console = logging.StreamHandler(stream=sys.stdout)
+    webhook_console.setFormatter(formatter)
+    webhook_console.setLevel(logging.DEBUG)
+    webhook_logger.addHandler(webhook_console)
+
+    # Логгер для ошибок -> stderr
     error_logger = logging.getLogger("errors")
     error_logger.setLevel(logging.ERROR)
-    
-    # Отдельный файл для ошибок
-    error_file_handler = logging.handlers.TimedRotatingFileHandler(
-        filename=LOGS_DIR / "errors.log",
-        when='D',
-        interval=1,
-        backupCount=7,
-        encoding='utf-8',
-        utc=False
-    )
-    error_file_handler.setFormatter(formatter)
-    error_file_handler.setLevel(logging.ERROR)
-    
-    error_logger.addHandler(error_file_handler)
-    # error_logger.addHandler(console_handler)  # Отключаем консольный вывод
-    
+    error_logger.handlers.clear()
+    error_console = logging.StreamHandler(stream=sys.stderr)
+    error_console.setFormatter(formatter)
+    error_console.setLevel(logging.ERROR)
+    error_logger.addHandler(error_console)
+
     return logger, webhook_logger, error_logger
 
 # Инициализация логгеров

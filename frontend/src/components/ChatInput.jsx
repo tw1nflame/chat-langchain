@@ -1,7 +1,9 @@
-import { useState, useRef, useEffect } from 'react'
+"use client"
+
+import { useState, useRef, useEffect } from "react"
 
 function ChatInput({ onSendMessage, centered = false, isLoading = false, persistentFiles = [], onClearFiles }) {
-  const [message, setMessage] = useState('')
+  const [message, setMessage] = useState("")
   const [files, setFiles] = useState([])
   const fileInputRef = useRef(null)
 
@@ -14,17 +16,17 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    
+
     const trimmedMessage = message.trim()
-    
+
     // Проверяем, что есть либо текст, либо файлы
     if ((trimmedMessage || files.length > 0) && !isLoading) {
       // Если нет текста, но есть файлы, добавляем сообщение по умолчанию
-      const messageToSend = trimmedMessage || (files.length > 0 ? `Отправлено файлов: ${files.length}` : '')
-      
+      const messageToSend = trimmedMessage || (files.length > 0 ? `Отправлено файлов: ${files.length}` : "")
+
       if (messageToSend) {
         onSendMessage(messageToSend, files)
-        setMessage('')
+        setMessage("")
         // Файлы остаются - не очищаем их здесь
       }
     }
@@ -32,15 +34,15 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
 
   const handleFileSelect = (e) => {
     const selectedFiles = Array.from(e.target.files)
-    setFiles(prev => [...prev, ...selectedFiles])
+    setFiles((prev) => [...prev, ...selectedFiles])
   }
 
   const removeFile = (index) => {
-    setFiles(prev => prev.filter((_, i) => i !== index))
+    setFiles((prev) => prev.filter((_, i) => i !== index))
   }
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSubmit(e)
     }
@@ -54,9 +56,7 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
           <div className="mb-3">
             {/* Заголовок с кнопкой очистки */}
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-600">
-                Прикреплено файлов: {files.length}
-              </span>
+              <span className="text-sm text-gray-600">Прикреплено файлов: {files.length}</span>
               <button
                 onClick={() => {
                   setFiles([])
@@ -70,23 +70,23 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
                 Очистить все
               </button>
             </div>
-            
+
             {/* Список файлов */}
             <div className="flex flex-wrap gap-2">
               {files.map((file, index) => (
                 <div key={index} className="flex items-center gap-2 bg-gray-100 px-3 py-1 rounded-full text-sm">
-                  <svg 
-                    width="14" 
-                    height="14" 
-                    viewBox="0 0 24 24" 
-                    fill="none" 
-                    stroke="currentColor" 
-                    strokeWidth="2" 
-                    strokeLinecap="round" 
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
                     strokeLinejoin="round"
                     className="text-gray-600"
                   >
-                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                   </svg>
                   <span className="truncate max-w-32">{file.name}</span>
                   <button
@@ -104,35 +104,35 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
 
         {/* Форма ввода */}
         <form onSubmit={handleSubmit} className="relative">
-          <div className={`flex items-center gap-2 rounded-lg overflow-hidden transition-all ${
-            centered 
-              ? "border-2 border-gray-300 focus-within:border-blue-500 focus-within:shadow-lg" 
-              : "border border-gray-300 focus-within:border-blue-500"
-          }`}>
+          <div
+            className={`flex items-center gap-2 rounded-lg overflow-hidden transition-all ${
+              centered
+                ? "border-2 border-gray-300 focus-within:border-blue-500 focus-within:shadow-lg"
+                : "border border-gray-300 focus-within:border-blue-500"
+            }`}
+          >
             {/* Кнопка прикрепления файлов */}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isLoading}
               className={`p-3 transition-colors group flex-shrink-0 ${
-                isLoading 
-                  ? 'text-gray-300 cursor-not-allowed' 
-                  : 'text-gray-500 hover:text-blue-500'
+                isLoading ? "text-gray-300 cursor-not-allowed" : "text-gray-500 hover:text-blue-500"
               }`}
               title={isLoading ? "Ожидание ответа..." : "Прикрепить файл"}
             >
-              <svg 
-                width="18" 
-                height="18" 
-                viewBox="0 0 24 24" 
-                fill="none" 
-                stroke="currentColor" 
-                strokeWidth="2" 
-                strokeLinecap="round" 
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
                 strokeLinejoin="round"
                 className="group-hover:rotate-12 transition-transform"
               >
-                <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
 
@@ -142,12 +142,12 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
               onChange={(e) => setMessage(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
-                isLoading 
-                  ? "Ожидание ответа..." 
+                isLoading
+                  ? "Ожидание ответа..."
                   : files.length > 0
                     ? "Добавьте описание к файлам (необязательно)..."
-                    : centered 
-                      ? "Задайте ваш вопрос..." 
+                    : centered
+                      ? "Задайте ваш вопрос..."
                       : "Напишите сообщение..."
               }
               disabled={isLoading}
@@ -162,38 +162,38 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
               type="submit"
               disabled={(!message.trim() && files.length === 0) || isLoading}
               className={`p-3 transition-colors group flex-shrink-0 ${
-                ((!message.trim() && files.length === 0) || isLoading)
-                  ? 'text-gray-300 cursor-not-allowed'
-                  : 'text-blue-500 hover:text-blue-600'
+                (!message.trim() && files.length === 0) || isLoading
+                  ? "text-gray-300 cursor-not-allowed"
+                  : "text-blue-500 hover:text-blue-600"
               }`}
               title={isLoading ? "Ожидание ответа..." : "Отправить сообщение"}
             >
               {isLoading ? (
-                <svg 
-                  width="18" 
-                  height="18" 
-                  viewBox="0 0 24 24" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  strokeWidth="2" 
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
                   className="animate-spin"
                 >
-                  <path d="M21 12a9 9 0 11-6.219-8.56"/>
+                  <path d="M21 12a9 9 0 11-6.219-8.56" />
                 </svg>
               ) : (
-                <svg 
-                  width="18" 
-                  height="18" 
-                  viewBox="0 0 24 24" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  strokeWidth="2" 
-                  strokeLinecap="round" 
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
                   strokeLinejoin="round"
                   className="group-hover:translate-x-1 transition-transform"
                 >
-                  <path d="m3 3 3 9-3 9 19-9Z"/>
-                  <path d="m6 12 15 0"/>
+                  <path d="m3 3 3 9-3 9 19-9Z" />
+                  <path d="m6 12 15 0" />
                 </svg>
               )}
             </button>
