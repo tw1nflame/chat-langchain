@@ -439,19 +439,6 @@ async def send_message_and_get_response(
     
     # Валидация входных данных
     validate_message_input(content, files)
-    # Verify ownership for existing chats: disallow sending to chats owned by others or ownerless chats
-    try:
-        existing_chat = db.query(Chat).filter(Chat.id == chat_id).first()
-        if existing_chat:
-            if existing_chat.owner_id is None or str(existing_chat.owner_id) != str(owner_id):
-                app_logger.warning("unauthorized_chat_message_attempt", extra={"chat_id": chat_id, "resolved_owner": owner_id, "chat_owner_in_db": getattr(existing_chat, 'owner_id', None)})
-                raise HTTPException(status_code=404, detail="Chat not found")
-    except HTTPException:
-        raise
-    except Exception:
-        # On DB lookup failure, be conservative and deny
-        app_logger.exception("chat_ownership_check_failed")
-        raise HTTPException(status_code=404, detail="Chat not found")
     
     # owner_id resolved by dependency
     # The dependency returns the Supabase user id or raises 401.
@@ -464,104 +451,25 @@ async def send_message_and_get_response(
     # Обработка сообщения пользователя
     api_files, webhook_files = await process_uploaded_files(files, chat_dir, chat_id)
     app_logger.info("files_processed", extra={"api_files_count": len(api_files), "webhook_files_count": len(webhook_files)})
-    # Persist chat and message in DB
-    # Enforce read-only usage of auth.users: do NOT create or modify users here.
-    # If owner_id was provided, only associate it if the user exists in auth.users.
-    if owner_id:
-        try:
-            # Robust existence check: only ask if a row exists to avoid mapping/provider issues.
-            stmt = text("SELECT 1 FROM auth.users WHERE id = :id LIMIT 1")
-            res = db.execute(stmt, {"id": owner_id}).scalar_one_or_none()
-            # Log existence at INFO so it's visible in default logs
-            app_logger.info("owner_exists_check_result", extra={"owner_id": owner_id, "exists": bool(res)})
-            if not res:
-                app_logger.warning("owner_not_found_in_auth", extra={"owner_id": owner_id})
-                owner_id = None
-            else:
-                app_logger.info("owner_exists_in_auth", extra={"owner_id": owner_id})
-        except Exception as e:
-            app_logger.exception(f"owner_check_failed owner_id={owner_id}")
-            # On error, avoid associating owner to prevent FK violations
-            owner_id = None
-
-    # If chat doesn't exist create it, set owner_id if we have it
+    # Verify chat exists and user has access to it
     try:
-        # Defensive: ensure we only associate owner_id if it still exists in the table
-        # that the chats.owner_id FK references (prevents FK violations when
-        # provider-managed users live in auth.users but the chats FK points to public.users)
-        owner_assoc = owner_id
-        if owner_assoc:
-            try:
-                fk_check_stmt = text(
-                    """
-                    SELECT nsp2.nspname as referenced_schema, cls2.relname as referenced_table
-                    FROM pg_constraint con
-                    JOIN pg_class cls ON cls.oid = con.conrelid
-                    JOIN pg_namespace nsp ON nsp.oid = cls.relnamespace
-                    JOIN pg_class cls2 ON cls2.oid = con.confrelid
-                    JOIN pg_namespace nsp2 ON nsp2.oid = cls2.relnamespace
-                    WHERE con.contype = 'f' AND con.conname = :cname
-                    """
-                )
-                fk_row = db.execute(fk_check_stmt, {"cname": "chats_owner_id_fkey"}).first()
-                if fk_row:
-                    referenced_schema = fk_row.referenced_schema
-                    referenced_table = fk_row.referenced_table
-                    app_logger.info("chats_owner_fk_points_to", extra={"schema": referenced_schema, "table": referenced_table})
-                    users_table_schema = referenced_schema
-                else:
-                    # If we can't find the FK, conservatively assume public
-                    users_table_schema = 'public'
-
-                # Now check existence in the referenced users table
-                # If we were able to determine the referenced schema via FK inspection,
-                # check that the owner actually exists in that schema's users table.
-                # If FK inspection didn't return a row (fk_row is falsy) then we don't
-                # want to conservatively assume the wrong schema ('public') and drop
-                # the owner. Instead, try the common schemas in a safe order.
-                exists = None
-                if users_table_schema:
-                    check_stmt = text(f"SELECT 1 FROM {users_table_schema}.users WHERE id = :id LIMIT 1")
-                    exists = db.execute(check_stmt, {"id": owner_assoc}).scalar_one_or_none()
-
-                # If FK inspection failed to find the referenced schema or the check
-                # above didn't find a row, attempt to verify existence in the
-                # typical auth schema first, then fall back to public. This avoids
-                # accidentally nulling owner_assoc when we already confirmed the
-                # user exists earlier (and when DB constraint name lookup failed).
-                if not exists:
-                    try:
-                        exists = db.execute(text("SELECT 1 FROM auth.users WHERE id = :id LIMIT 1"), {"id": owner_assoc}).scalar_one_or_none()
-                    except Exception:
-                        exists = None
-
-                if not exists:
-                    try:
-                        exists = db.execute(text("SELECT 1 FROM public.users WHERE id = :id LIMIT 1"), {"id": owner_assoc}).scalar_one_or_none()
-                    except Exception:
-                        exists = None
-
-                if not exists:
-                    app_logger.warning("owner_assoc_doublecheck_failed", extra={"owner_id": owner_assoc, "checked_schema": users_table_schema})
-                    owner_assoc = None
-                else:
-                    app_logger.info("owner_assoc_doublecheck_ok", extra={"owner_id": owner_assoc, "checked_schema": users_table_schema})
-            except Exception:
-                app_logger.exception("owner_assoc_fk_inspect_failed")
-                owner_assoc = None
-
         db_chat = db.query(Chat).filter(Chat.id == chat_id).first()
         if not db_chat:
-            db_chat = Chat(id=chat_id, title="Новый чат", owner_id=owner_assoc)
-            db.add(db_chat)
-            db.commit()
-            db.refresh(db_chat)
-            app_logger.info("chat_created", extra={"chat_id": db_chat.id, "owner_id": db_chat.owner_id})
-    except Exception as e:
+            # Chat must exist before sending messages - it should be created via POST /chats endpoint first
+            app_logger.warning("chat_not_found_for_message", extra={"chat_id": chat_id, "owner_id": owner_id})
+            raise HTTPException(status_code=404, detail="Chat not found. Create chat first using POST /chats endpoint.")
+        
+        # Verify chat ownership
+        if db_chat.owner_id is None or str(db_chat.owner_id) != str(owner_id):
+            app_logger.warning("unauthorized_chat_message_attempt", extra={"chat_id": chat_id, "resolved_owner": owner_id, "chat_owner_in_db": getattr(db_chat, 'owner_id', None)})
+            raise HTTPException(status_code=404, detail="Chat not found")
+    except HTTPException:
+        raise
+    except Exception as e: 
         # Log full exception with traceback for diagnostics
-        app_logger.exception(f"chat_create_failed chat_id={chat_id}")
+        app_logger.exception(f"chat_fetch_failed chat_id={chat_id}")
         # Surface the error message to the client for easier debugging (safe for dev)
-        raise HTTPException(status_code=500, detail=f"Failed to create or fetch chat: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch chat: {str(e)}")
 
     # Create message record
     try:
@@ -613,8 +521,15 @@ async def send_message_and_get_response(
     except Exception as e:
         app_logger.exception(f"assistant_response_failed chat_id={chat_id}")
         raise HTTPException(status_code=500, detail=f"Assistant generation failed: {str(e)}")
-    # Persist assistant message
+    # Persist assistant message - but first verify chat still exists
     try:
+        # Re-check that the chat still exists before saving assistant message
+        # (user might have deleted chat while webhook was processing)
+        chat_still_exists = db.query(Chat).filter(Chat.id == chat_id).first()
+        if not chat_still_exists:
+            app_logger.warning("chat_deleted_during_processing", extra={"chat_id": chat_id})
+            raise HTTPException(status_code=404, detail="Chat was deleted during processing")
+        
         db_assistant_message = Message(
             id=str(uuid.uuid4()),
             chat_id=chat_id,
@@ -624,6 +539,8 @@ async def send_message_and_get_response(
         db.add(db_assistant_message)
         db.commit()
         db.refresh(db_assistant_message)
+    except HTTPException:
+        raise
     except Exception as e:
         app_logger.exception(f"assistant_message_persist_failed chat_id={chat_id}")
         raise HTTPException(status_code=500, detail=f"Failed to persist assistant message: {str(e)}")

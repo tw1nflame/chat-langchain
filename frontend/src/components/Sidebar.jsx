@@ -68,7 +68,15 @@ function Sidebar({ chats, activeChat, onChatSelect, onNewChat, user, onLogout, o
         ) : sortedChats.length === 0 ? (
           <div className="p-3 text-center text-gray-400 text-sm">Нет чатов</div>
         ) : (
-          sortedChats.map((chat) => (
+          sortedChats
+            .filter(chat => {
+              // Основная проверка
+              if (!chat || !chat.id) return false
+              // Скрываем пустые локальные чаты
+              if (!chat.persisted && (!chat.messages || chat.messages.length === 0)) return false
+              return true
+            })
+            .map((chat) => (
             <div
               key={chat.id}
               className={`p-3 flex items-center justify-between cursor-pointer hover:bg-gray-800 transition-colors border-l-2 ${

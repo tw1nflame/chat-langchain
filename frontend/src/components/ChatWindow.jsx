@@ -62,25 +62,33 @@ function ChatWindow({ chat, onUpdateMessages }) {
 
     try {
       console.log("[ChatWindow] Sending message: chatId=", chat.id, "content=", content, "files=", files)
-      // If chat wasn't persisted yet, create it on server and update chat.server_id
+      
+      // Check if the chat still exists (basic sanity check)
+      if (!chat || !chat.id) {
+        console.log("[ChatWindow] Chat no longer exists, canceling message send")
+        return
+      }
+      
+      // Step 1: Ensure chat exists on server
       let serverId = chat.server_id || null
       if (!serverId) {
-        try {
-          const serverChat = await createChat(chat.title || "Новый чат")
-          serverId = serverChat.id
-          // Update local chat to remember server id and preserve the freshly added user message
-          // Pass messagesWithUser (which contains the newly appended userMessage) instead of
-          // reading chat.messages which may be stale due to state batching.
-          onUpdateMessages(chat.id, messagesWithUser, { server_id: serverId })
-          console.debug("[ChatWindow] persisted chat on server", serverId)
-        } catch (err) {
-          console.warn("[ChatWindow] failed to persist chat before sending message", err)
-        }
+        console.log("[ChatWindow] Creating chat on server first...")
+        const serverChat = await createChat(chat.title || "Новый чат")
+        serverId = serverChat.id
+        
+        // Update local chat to remember server id and preserve the freshly added user message
+        // IMPORTANT: Also update the server_id immediately to avoid race conditions
+        onUpdateMessages(chat.id, messagesWithUser, { 
+          server_id: serverId,
+          // Ensure the chat is marked as persisted
+          persisted: true 
+        })
+        console.log("[ChatWindow] Chat created on server with ID:", serverId)
       }
 
-      // Отправляем сообщение пользователя и получаем оба сообщения
-      const targetId = serverId || chat.id
-      const response = await sendMessage(targetId, content, files)
+      // Step 2: Send message to existing chat
+      console.log("[ChatWindow] Sending message to chat:", serverId)
+      const response = await sendMessage(serverId, content, files)
   console.log("[ChatWindow] sendMessage response:", response)
 
       // Создаем сообщение ассистента
@@ -96,7 +104,16 @@ function ChatWindow({ chat, onUpdateMessages }) {
       const finalMessages = [...messagesWithUser, assistantMessage]
       onUpdateMessages(chat.id, finalMessages)
     } catch (error) {
-  console.error("[ChatWindow] Ошибка при отправке сообщения:", error)
+      // Check if the error is because chat was deleted during processing
+      if (error.message && (error.message.includes('ChatDeletedError') || 
+          error.message.includes('Chat was deleted') || 
+          error.message.includes('404'))) {
+        console.log("[ChatWindow] Chat was deleted during processing, not showing error message")
+        return
+      }
+
+      // Only log error if it's not a "chat deleted" case
+      console.error("[ChatWindow] Ошибка при отправке сообщения:", error)
 
       // В случае ошибки добавляем сообщение об ошибке
       const errorMessage = {

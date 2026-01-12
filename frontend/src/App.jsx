@@ -36,14 +36,12 @@ function App() {
   // Функции аутентификации
   const handleLogin = (userData) => {
     setUser(userData)
-    // After login, load server chats and ensure a local initial chat exists
-    loadServerChatsAndEnsureInitial().catch((e) => console.warn('[App] load after login failed', e))
+    // Server chats will be loaded by the useEffect when user state changes
   }
 
   const handleRegister = (userData) => {
     setUser(userData)
-    // After registration, load server chats and ensure a local initial chat exists
-    loadServerChatsAndEnsureInitial().catch((e) => console.warn('[App] load after register failed', e))
+    // Server chats will be loaded by the useEffect when user state changes
   }
 
   const handleLogout = async () => {
@@ -67,6 +65,9 @@ function App() {
       console.warn('[App] clearing localStorage failed', e)
     }
 
+    // Очищаем пустые локальные чаты перед выходом
+    cleanupEmptyLocalChats()
+
     // Reset the initial-load marker so a subsequent sign-in will re-run
     // the server chat loader and create an initial chat if needed.
     try {
@@ -81,6 +82,8 @@ function App() {
 
   const handleDeleteChat = async (chatId) => {
     try {
+      const chatObj = chats[chatId]
+      
       // optimistic UI: remove immediately
       setChats((prev) => {
         const copy = { ...prev }
@@ -90,8 +93,15 @@ function App() {
       if (activeChat === chatId) {
         setActiveChat(null)
       }
-      // call backend
-      await import("./api/chat").then(({ deleteChat }) => deleteChat(chatId))
+      
+      // Only delete from server if chat has server_id and is persisted
+      // Local chats without server_id or not persisted only exist in browser state
+      if (chatObj && chatObj.server_id && chatObj.persisted) {
+        await import("./api/chat").then(({ deleteChat }) => deleteChat(chatObj.server_id))
+        console.log('[App] Chat deleted from server:', chatObj.server_id)
+      } else {
+        console.log('[App] Deleted local-only chat:', chatId, 'server_id:', chatObj?.server_id, 'persisted:', chatObj?.persisted)
+      }
     } catch (e) {
       console.error('[App] failed to delete chat', chatId, e)
       // on error, re-fetch chat list
@@ -114,6 +124,7 @@ function App() {
             messages: c.last_message ? [{ id: c.id + "-preview", role: previewRole, content: c.last_message, timestamp: c.created_at ? new Date(c.created_at) : new Date() }] : [],
             preview: Boolean(c.last_message),
             createdAt: c.created_at ? new Date(c.created_at) : new Date(),
+            persisted: true, // Server chats are always persisted
           }
         }
         setChats(mapped)
@@ -121,6 +132,27 @@ function App() {
         console.warn('[App] failed to refresh chats after delete failure', err)
       }
     }
+  }
+
+  // Функция для очистки пустых локальных чатов
+  const cleanupEmptyLocalChats = () => {
+    setChats((prev) => {
+      const cleaned = { ...prev }
+      let hasChanges = false
+      
+      Object.keys(cleaned).forEach(chatId => {
+        const chat = cleaned[chatId]
+        // Удаляем пустые локальные чаты (не персистентные и без сообщений)
+        // НО НЕ удаляем активный чат
+        if (!chat.persisted && (!chat.messages || chat.messages.length === 0) && chatId !== activeChat) {
+          delete cleaned[chatId]
+          hasChanges = true
+          console.log('[App] Cleaned up empty local chat:', chatId, '(not active)')
+        }
+      })
+      
+      return hasChanges ? cleaned : prev
+    })
   }
 
   // Создание начального чата на сервере и установка как активного
@@ -134,10 +166,10 @@ function App() {
       title: "Чат с ассистентом",
       messages: [],
       createdAt: new Date(),
+      persisted: false, // Local transient chat
     }
     setChats((prev) => ({ ...prev, [initialChatId]: initialChat }))
-    // Only set activeChat if no chat is currently selected
-    setActiveChat((cur) => (cur ? cur : initialChatId))
+    // Note: caller should set activeChat if needed for initial login scenarios
     return initialChat
   }
 
@@ -162,6 +194,7 @@ function App() {
   // This function merges server chats into existing state without wiping local transient chats.
   // It will create the initial local chat only on the first successful load.
     const loadServerChatsAndEnsureInitial = async () => {
+      console.log('[App] loadServerChatsAndEnsureInitial called')
       setLoadingChats(true)
       await restoreSession()
       if (!mounted) {
@@ -175,7 +208,8 @@ function App() {
         if (!sess || !sess.user) {
           console.debug('[App] no authenticated session, skipping server chat load')
           if (!initialLoadDoneRef.current) {
-            await createInitialChat()
+            const newChat = await createInitialChat()
+            setActiveChat(newChat.id)
             initialLoadDoneRef.current = true
           }
           setLoadingChats(false)
@@ -186,7 +220,7 @@ function App() {
       }
       try {
         const serverChats = await getChats()
-        console.debug('[App] fetched serverChats (initial load):', serverChats)
+        console.log('[App] fetched serverChats (initial load):', serverChats)
         if (!mounted) return
         const mapped = {}
         for (const c of serverChats || []) {
@@ -201,6 +235,7 @@ function App() {
             messages: c.last_message ? [{ id: c.id + "-preview", role: previewRole, content: c.last_message, timestamp: c.created_at ? new Date(c.created_at) : new Date() }] : [],
             preview: Boolean(c.last_message),
             createdAt: c.created_at ? new Date(c.created_at) : new Date(),
+            persisted: true, // Server chats are always persisted
           }
         }
 
@@ -213,15 +248,29 @@ function App() {
           return copy
         })
 
+        // Очищаем пустые локальные чаты после загрузки серверных (отложено)
+        // setTimeout(() => cleanupEmptyLocalChats(), 100)
+
         // On the very first successful load, ensure there is at least one local chat selected
+        console.log('[App] initialLoadDoneRef.current=', initialLoadDoneRef.current)
         if (!initialLoadDoneRef.current) {
           const hasAny = Object.keys(mapped).length > 0
+          console.log('[App] initial load: hasAny=', hasAny, 'mapped=', mapped)
           if (!hasAny) {
             // No chats on server: create a local transient chat only. Do NOT
             // persist an empty chat to the server. The chat will be persisted
             // when the user sends the first message (ChatWindow handles that).
-            await createInitialChat()
+            console.log('[App] Creating initial chat for new user')
+            const newChat = await createInitialChat()
+            // Ensure the new chat is set as active
+            setActiveChat(newChat.id)
+            console.log('[App] Set active chat to:', newChat.id)
           } else {
+            // If there are server chats, activate the first one
+            const firstChatId = Object.keys(mapped)[0]
+            if (firstChatId && !activeChat) {
+              setActiveChat(firstChatId)
+            }
             // Ensure a local initial chat exists alongside server chats if none present locally
             const hasLocal = Object.values(chats || {}).some((c) => !c.server_id)
             if (!hasLocal) {
@@ -234,15 +283,18 @@ function App() {
         console.error("[App] failed to load chats:", e)
         // fallback to initial chat on first load only
         if (!initialLoadDoneRef.current) {
-          createInitialChat()
+          const newChat = await createInitialChat()
+          setActiveChat(newChat.id)
           initialLoadDoneRef.current = true
         }
       }
       setLoadingChats(false)
     }
 
-  loadServerChatsAndEnsureInitial()
-  // Subscribe to auth changes to keep UI in sync
+    // Start loading immediately
+    loadServerChatsAndEnsureInitial().catch((e) => console.error('[App] initial load failed', e))
+    
+    // Subscribe to auth changes to keep UI in sync
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       console.debug("[App] auth state changed", event)
       if (event === "SIGNED_IN" && session?.user) {
@@ -289,6 +341,9 @@ function App() {
   // Handle selecting a chat: prefetch messages for server-backed chats before
   // switching activeChat to avoid showing only the preview then later the rest.
   const handleSelectChat = async (chatId) => {
+    // Очищаем пустые локальные чаты при переключении
+    cleanupEmptyLocalChats()
+    
     const chatObj = chats[chatId]
     // If this is a local transient chat with no server_id and not a preview, just activate it
     if (chatObj && !chatObj.server_id && !chatObj.preview) {
@@ -386,33 +441,43 @@ function App() {
     }
   }, [activeChat])
 
-  // Создание нового чата
-  const createNewChat = async () => {
-    try {
-      const serverChat = await createChat("Новый чат")
-      const chatObj = {
-        id: serverChat.id,
-        title: serverChat.title || "Новый чат",
-        messages: [],
-        createdAt: serverChat.created_at ? new Date(serverChat.created_at) : new Date(),
+  // Автоматически выбираем первый доступный чат, если нет активного
+  useEffect(() => {
+    console.log('[App] Auto-select effect: activeChat=', activeChat, 'chats.length=', Object.keys(chats).length, 'user=', !!user)
+    if (!activeChat && Object.keys(chats).length > 0 && user) {
+      // Находим первый чат, который не является пустым локальным чатом
+      const availableChats = Object.values(chats).filter(chat => {
+        // Включаем персистентные чаты и локальные чаты с сообщениями
+        return chat.persisted || (chat.messages && chat.messages.length > 0)
+      })
+      
+      if (availableChats.length > 0) {
+        const firstChatId = availableChats[0].id
+        console.log('[App] Auto-selecting first available chat:', firstChatId)
+        setActiveChat(firstChatId)
+      } else {
+        // Если нет подходящих чатов, выбираем любой первый (может быть пустой локальный)
+        const firstChatId = Object.keys(chats)[0]
+        console.log('[App] Auto-selecting first chat (even if empty):', firstChatId)
+        setActiveChat(firstChatId)
       }
-      setChats((prev) => ({ ...prev, [chatObj.id]: chatObj }))
-      setActiveChat(chatObj.id)
-      return chatObj
-    } catch (e) {
-      console.error("[App] createNewChat failed", e)
-      // fallback to local chat
-      const newChatId = generateUUID()
-      const newChat = {
-        id: newChatId,
-        title: "Новый чат",
-        messages: [],
-        createdAt: new Date(),
-      }
-      setChats((prev) => ({ ...prev, [newChatId]: newChat }))
-      setActiveChat(newChatId)
-      return newChat
     }
+  }, [chats, activeChat, user])
+
+  // Создание нового чата (локального, будет сохранен на сервере при отправке первого сообщения)
+  const createNewChat = async () => {
+    const newChatId = generateUUID()
+    const newChat = {
+      id: newChatId,
+      server_id: null, // indicates not persisted yet
+      title: "Новый чат",
+      messages: [],
+      createdAt: new Date(),
+      persisted: false, // Local transient chat
+    }
+    setChats((prev) => ({ ...prev, [newChatId]: newChat }))
+    setActiveChat(newChatId)
+    return newChat
   }
 
   // Обновление сообщений чата

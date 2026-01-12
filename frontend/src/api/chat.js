@@ -77,14 +77,28 @@ export const sendMessage = async (chatId, content, files = []) => {
   console.log("[chat.api] response status:", response.status, "body:", responseText)
 
   if (!response.ok) {
-    console.error("[chat.api] Server error:", response.status, responseText)
-    // Try to surface JSON error if present
+    // Check if this is a "chat deleted during processing" error - don't log as error
+    const isChatDeletedError = response.status === 404 && 
+      responseText && responseText.includes('Chat was deleted during processing')
+    
+    if (!isChatDeletedError) {
+      console.error("[chat.api] Server error:", response.status, responseText)
+    } else {
+      console.log("[chat.api] Chat was deleted during processing (expected):", response.status)
+    }
+    
+    // Create a custom error for chat deleted case
+    let errorMessage
     try {
       const jsonErr = JSON.parse(responseText)
-      throw new Error(JSON.stringify(jsonErr))
+      errorMessage = isChatDeletedError ? 
+        `ChatDeletedError: ${jsonErr.detail}` : 
+        JSON.stringify(jsonErr)
     } catch (e) {
-      throw new Error(`HTTP error! status: ${response.status} body: ${responseText}`)
+      errorMessage = `HTTP error! status: ${response.status} body: ${responseText}`
     }
+    
+    throw new Error(errorMessage)
   }
 
   let result = {}

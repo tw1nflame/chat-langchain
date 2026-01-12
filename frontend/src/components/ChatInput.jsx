@@ -6,6 +6,7 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
   const [message, setMessage] = useState("")
   const [files, setFiles] = useState([])
   const fileInputRef = useRef(null)
+  const textareaRef = useRef(null)
 
   // Синхронизируем локальные файлы с persistent файлами
   useEffect(() => {
@@ -13,6 +14,33 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
       setFiles(persistentFiles)
     }
   }, [persistentFiles])
+
+  // Автоматическое изменение размера textarea
+  const adjustTextareaHeight = () => {
+    const textarea = textareaRef.current
+    if (textarea) {
+      // Сбрасываем высоту к минимальной для корректного расчета scrollHeight
+      textarea.style.height = 'auto'
+      
+      // Устанавливаем ограничения
+      const maxHeight = 200 // максимальная высота (примерно 8-9 строк)
+      const scrollHeight = textarea.scrollHeight
+      
+      // Применяем высоту с учетом ограничений
+      const newHeight = Math.min(maxHeight, scrollHeight)
+      textarea.style.height = `${newHeight}px`
+    }
+  }
+
+  // Автоматически изменяем размер при изменении текста
+  useEffect(() => {
+    adjustTextareaHeight()
+  }, [message, centered])
+
+  // Также корректируем размер при монтировании компонента
+  useEffect(() => {
+    adjustTextareaHeight()
+  }, [])
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -138,6 +166,7 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
 
             {/* Поле ввода */}
             <textarea
+              ref={textareaRef}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -151,9 +180,14 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
                       : "Напишите сообщение..."
               }
               disabled={isLoading}
-              className={`flex-1 resize-none border-0 outline-none max-h-32 min-h-[24px] ${
+              className={`flex-1 resize-none border-0 outline-none overflow-y-auto chat-textarea ${
                 centered ? "py-4 text-base" : "py-3"
               } ${isLoading ? "bg-gray-50 text-gray-400 cursor-not-allowed" : ""}`}
+              style={{ 
+                lineHeight: '1.5',
+                scrollbarWidth: 'thin',
+                scrollbarColor: '#cbd5e1 transparent'
+              }}
               rows="1"
             />
 
