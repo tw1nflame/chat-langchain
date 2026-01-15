@@ -21,6 +21,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project
 COPY . .
 
+# Create volume for storage
+VOLUME ["/code/storage"]
+
 # Set work directory to app folder for uvicorn
 WORKDIR /code/app
 
