@@ -40,6 +40,11 @@ function RegisterPage({ onRegister, onSwitchToLogin }) {
       return
     }
 
+    // Временно отключаем регистрацию
+    setError("Регистрация временно отключена администратором")
+    return;
+
+    /*
     setIsLoading(true)
 
     try {
@@ -64,6 +69,7 @@ function RegisterPage({ onRegister, onSwitchToLogin }) {
     } finally {
       setIsLoading(false)
     }
+    */
   }
 
   return (

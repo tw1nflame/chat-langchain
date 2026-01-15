@@ -48,12 +48,14 @@ function LoginPage({ onLogin, onSwitchToRegister }) {
       <div className="max-w-md w-full space-y-8">
         <div>
           <h2 className="mt-6 text-center text-3xl font-bold text-gray-900">Вход в аккаунт</h2>
+          {/* 
           <p className="mt-2 text-center text-sm text-gray-600">
             Или{" "}
             <button onClick={onSwitchToRegister} className="font-medium text-blue-600 hover:text-blue-500">
               создайте новый аккаунт
             </button>
           </p>
+          */}
         </div>
 
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
