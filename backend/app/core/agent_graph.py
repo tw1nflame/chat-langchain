@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from core.logging_config import app_logger
 from sqlalchemy import text
 import re
-from core.templates.agent_templates import template, viz_template, summary_template
+from core.templates.agent_templates import template, viz_template, summary_template, planner_template
 import json
 # from utils.export_utils import save_dataframe_to_excel (Removed)
 
@@ -37,6 +37,9 @@ prompt = PromptTemplate.from_template(template)
 # Create the SQL generation chain
 sql_chain = create_sql_query_chain(llm, db, prompt=prompt, k=50)
 
+# Planner Prompt
+planner_prompt = PromptTemplate.from_template(planner_template)
+
 # Visualization Prompt
 
 viz_prompt = PromptTemplate.from_template(viz_template)
@@ -44,11 +47,75 @@ viz_prompt = PromptTemplate.from_template(viz_template)
 # Define State
 class GraphState(TypedDict):
     question: str
-    query: str
-    result: str # Formatting result or error message
-    tables: Optional[List[dict]] = None # List of table data
-    charts: Optional[List[dict]] = None # List of chart specs
+    
+    # Planner state
+    plan: Optional[List[dict]] 
+    current_step: int
+    next_action: Optional[str]
+
+    # Execution state
+    query: Optional[str]
+    result: Optional[str] # Formatting result or error message
+    tables: Optional[List[dict]] # List of table data
+    charts: Optional[List[dict]] # List of chart specs
     owner_id: str # User ID for secure export naming
+
+# Node: Planner
+def planner(state: GraphState):
+    app_logger.info("Planner: generating plan")
+    planner_chain = planner_prompt | llm
+    try:
+        response = planner_chain.invoke({"question": state["question"]})
+        # Try to parse JSON from the response
+        content = response.content.strip()
+        
+        # Clean up code blocks if present
+        match = re.search(r"```json(.*?)```", content, re.DOTALL | re.IGNORECASE)
+        if match:
+             content = match.group(1).strip()
+        elif content.startswith("```"):
+             match_generic = re.search(r"```(.*?)```", content, re.DOTALL)
+             if match_generic:
+                 content = match_generic.group(1).strip()
+                 
+        plan = json.loads(content)
+        app_logger.info(f"Planner plan generated: {plan}")
+        return {
+            "plan": plan,
+            "current_step": 0
+        }
+    except Exception as e:
+        app_logger.error(f"Planner failed: {e}")
+        # Fallback plan for errors
+        return {
+            "plan": [{"action": "GENERATE_SQL"}, {"action": "EXECUTE_SQL"}, {"action": "SUMMARIZE"}],
+            "current_step": 0
+        }
+
+# Node: Executor
+def executor(state: GraphState):
+    plan = state.get("plan", [])
+    current_step = state.get("current_step", 0)
+    
+    if current_step >= len(plan):
+        app_logger.info("Executor: Plan finished")
+        return {"next_action": "end"}
+        
+    step = plan[current_step]
+    action = step.get("action")
+    
+    app_logger.info(f"Executor step {current_step}: {action}")
+    return {"next_action": action}
+
+# Node: Action Router
+def action_router(state: GraphState):
+    return state.get("next_action", "end")
+
+# Node: Next Step
+def next_step(state: GraphState):
+    return {
+        "current_step": state["current_step"] + 1
+    }
 
 # Node 1: Generate Query
 def generate_query(state: GraphState):
@@ -197,11 +264,18 @@ def generate_summary(state: GraphState):
     
     # Simple heuristic to avoid LLM call if error or empty
     if not tables and not charts:
-        # If NO_SQL, proceed to generate greeting. Otherwise return error/empty result.
-        if query == "NO_SQL":
-             pass 
+        # If query is NO_SQL or explicitly None (meaning skipped SQL generation by planner), permit LLM summary (greeting)
+        is_no_sql = (query == "NO_SQL") or (query is None)
+
+        if is_no_sql:
+             # Proceed to LLM generation (pass NO_SQL to prompt to ensure greeting behavior)
+             if query is None:
+                 query = "NO_SQL"
         else:
-            return {"result": state.get("result", "No data found.")}
+             # We had a query, but no tables/charts. Rely on previous result message.
+             res = state.get("result")
+             # Ensure we don't return None
+             return {"result": res if res else "No data found."}
         
     summary_chain = summary_prompt | llm
     try:
@@ -222,27 +296,69 @@ def generate_summary(state: GraphState):
 
 # Build Graph
 builder = StateGraph(GraphState)
+
+# Add nodes
+builder.add_node("planner", planner)
+builder.add_node("executor", executor)
+builder.add_node("next_step", next_step)
 builder.add_node("generate_query", generate_query)
 builder.add_node("execute_format", execute_and_format)
 builder.add_node("generate_viz", generate_viz)
 builder.add_node("generate_summary", generate_summary)
 
-builder.set_entry_point("generate_query")
-builder.add_edge("generate_query", "execute_format")
-builder.add_edge("execute_format", "generate_viz")
-builder.add_edge("generate_viz", "generate_summary")
+# Define flow
+builder.set_entry_point("planner")
+
+builder.add_edge("planner", "executor")
+
+builder.add_conditional_edges(
+    "executor",
+    action_router,
+    {
+        "GENERATE_SQL": "generate_query",
+        "EXECUTE_SQL": "execute_format",
+        "GENERATE_VIZ": "generate_viz",
+        "SUMMARIZE": "generate_summary",
+        "end": END
+    }
+)
+
+# After each action, go to next_step (except Summary which ends the flow)
+builder.add_edge("generate_query", "next_step")
+builder.add_edge("execute_format", "next_step")
+builder.add_edge("generate_viz", "next_step")
+# Special case: The user flow suggests Summary is the end. 
+# However, if planner puts SUMMARIZE in the middle (unlikely), we'd loop.
+# But for now, let's treat SUMMARIZE as a terminal node as per user request (generate_summary -> END)
+# Actually, the user's diagram had: generate_summary -> END.
+# Let's enforce that SUMMARIZE terminates the graph regardless of plan length to match previous behavior,
+# OR we can strictly follow the plan. 
+# User asked: "generate_summary -> END"
 builder.add_edge("generate_summary", END)
+
+builder.add_edge("next_step", "executor")
 
 graph = builder.compile()
 
 def run_agent(query: str, owner_id: str):
     """
-    Executes the pure SQL generation -> Execution pipeline.
+    Executes the Planner -> Executor pipeline.
     Returns a dict with 'content' and 'tables'
     """
-    app_logger.info(f"run_agent (SQL mode): query='{query}' owner_id='{owner_id}'")
+    app_logger.info(f"run_agent (Planner mode): query='{query}' owner_id='{owner_id}'")
     try:
-        final_state = graph.invoke({"question": query, "owner_id": owner_id})
+        # Initialize default state
+        init_state = {
+            "question": query,
+            "owner_id": owner_id,
+            "current_step": 0,
+            "plan": [],
+            "tables": [],
+            "charts": [],
+            "query": None,
+            "result": None
+        }
+        final_state = graph.invoke(init_state)
         return {
             "content": final_state.get("result", ""),
             "tables": final_state.get("tables", []),
