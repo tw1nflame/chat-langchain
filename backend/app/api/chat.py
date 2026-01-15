@@ -1,21 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException, Form, File, UploadFile, Header, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Form, File, UploadFile, Header, Request, Response
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 from collections import defaultdict
 import uuid
 import os
+import shutil
 from datetime import datetime
 from core.database import get_db
-from models.chat import Chat, Message, User, File as FileModel
+from models.chat import Chat, Message, User, File as FileModel, Chart
 from schemas.chat import ChatCreate, ChatResponse, MessageResponse, ChatExchangeResponse
 from utils.chat_utils import (
     validate_message_input,
     ensure_chat_directory,
     process_uploaded_files,
-    generate_assistant_response
+    generate_assistant_response,
+    get_storage_base_path
 )
-from core.minio_manager import get_minio_manager_from_env
+from utils.storage_utils import (
+    save_table_parquet,
+    load_tables_for_message,
+    get_table_as_excel_stream,
+    delete_tables_for_message
+)
 from core.logging_config import app_logger
 from core.config import settings
 from sqlalchemy import text
@@ -48,6 +55,7 @@ def _serialize_message(msg: Message) -> dict:
         "role": getattr(msg, 'role', None),
         "content": getattr(msg, 'content', None),
         "files": getattr(msg, 'files', []) if hasattr(msg, 'files') else [],
+        "charts": [{"id": str(c.id), "title": c.title, "spec": c.spec} for c in msg.charts] if hasattr(msg, 'charts') else [],
         "created_at": getattr(msg, 'created_at', None),
         "owner_id": str(getattr(msg, 'owner_id')) if getattr(msg, 'owner_id', None) is not None else None,
     }
@@ -294,8 +302,19 @@ async def get_messages(chat_id: str, request: Request, db: Session = Depends(get
                         "owner_id": str(owner_val) if owner_val is not None else None,
                     })
                 sm['files'] = files_list
+                
+                # Load tables from Parquet
+                tables_data = load_tables_for_message(str(m.id))
+                for table in tables_data:
+                    # Attach download URL for Excel using the specific index from file
+                    idx = table.get('index', 0)
+                    table['download_url'] = f"/api/v1/download/table/{m.id}/{idx}/export.xlsx"
+                
+                sm['tables'] = tables_data
+
             except Exception:
                 sm['files'] = []
+                sm['tables'] = []
             serialized.append(sm)
         try:
             # Log count and a small preview to help debug frontend issues
@@ -345,22 +364,27 @@ async def delete_chat(chat_id: str, request: Request, db: Session = Depends(get_
             app_logger.warning("unauthorized_chat_access", extra={"requested_chat": chat_id, "owner_id": owner_id})
             raise HTTPException(status_code=404, detail="Chat not found")
 
-        # Delete associated files from Minio (best-effort) and DB
+        # Cleanup physical files (Parquet tables and chat directory)
         try:
-            files = db.query(FileModel).filter(FileModel.chat_id == chat_id).all()
-            minio = get_minio_manager_from_env()
-            bucket = "client-files"
-            for f in files:
+            # 1. Delete Parquet tables associated with messages
+            messages = db.query(Message).filter(Message.chat_id == chat_id).all()
+            for msg in messages:
                 try:
-                    if minio and getattr(minio, 'client', None):
-                        object_name = f"{chat_id}/{f.name}"
-                        try:
-                            minio.client.remove_object(bucket, object_name)
-                            app_logger.info("minio_object_deleted", extra={"object": object_name, "chat_id": chat_id})
-                        except Exception:
-                            app_logger.warning("minio_object_delete_failed", extra={"object": object_name, "chat_id": chat_id})
-                except Exception:
-                    app_logger.exception("minio_delete_iteration_failed")
+                    delete_tables_for_message(str(msg.id))
+                except Exception as e:
+                    app_logger.warning(f"Failed to delete tables for message {msg.id}: {e}")
+
+            # 2. Delete the chat directory itself (if it exists)
+            chat_dir = ensure_chat_directory(chat_id)
+            if os.path.exists(chat_dir):
+                shutil.rmtree(chat_dir)
+                app_logger.info(f"Deleted chat directory: {chat_dir}")
+
+        except Exception as e:
+             app_logger.error(f"Error during physical file cleanup for chat {chat_id}: {e}")
+
+        # Delete associated files from DB (Storage removed)
+        try:
             # Remove FileModel rows
             try:
                 db.query(FileModel).filter(FileModel.chat_id == chat_id).delete(synchronize_session=False)
@@ -368,6 +392,20 @@ async def delete_chat(chat_id: str, request: Request, db: Session = Depends(get_
                 app_logger.exception("delete_file_rows_failed")
         except Exception:
             app_logger.exception("files_cleanup_failed")
+
+        # Delete associated charts
+        try:
+            # Find all messages in this chat
+            # (Note: Cascade delete on relationship should handle this if configured in DB, but explicit delete is safer for current session)
+            # Fetch message IDs first
+            msg_ids = db.query(Message.id).filter(Message.chat_id == chat_id).all()
+            msg_ids = [m[0] for m in msg_ids]
+            
+            if msg_ids:
+                 db.query(Chart).filter(Chart.message_id.in_(msg_ids)).delete(synchronize_session=False)
+                 
+        except Exception as e:
+            app_logger.error(f"charts_cleanup_failed: {e}")
 
         # Delete messages and chat row
         try:
@@ -399,25 +437,12 @@ async def send_message_and_get_response(
 ):
     """Отправить сообщение в чат и получить ответ ассистента"""
     
-    # Log request basics and headers for debugging. Redact sensitive headers (Authorization, Cookie).
+    # Log request
     try:
         hdrs = dict(request.headers) if request else {}
     except Exception:
         hdrs = {}
-    try:
-        preview_parts = []
-        for k, v in hdrs.items():
-            kl = k.lower()
-            if kl in ("authorization", "cookie", "set-cookie"):
-                preview_parts.append(f"{k}: <REDACTED>")
-            else:
-                val = v if v is not None else ""
-                shortened = (val[:50] + "...") if len(val) > 50 else val
-                preview_parts.append(f"{k}:{shortened}")
-        headers_preview = ", ".join(preview_parts)
-    except Exception:
-        headers_preview = ""
-
+    
     app_logger.info(
         "received_message",
         extra={
@@ -425,53 +450,35 @@ async def send_message_and_get_response(
             "role": role,
             "content_length": len(content),
             "files_count": len(files),
-            "headers_preview": headers_preview,
-            "method": request.method if request is not None else None,
-            "path": str(request.url.path) if request is not None else None,
         },
     )
-    # Print to stdout for quick debugging
-    try:
-        rid = _get_request_id(request)
-        print(f"[DEBUG] received_message request_id={rid} chat_id={chat_id} role={role} content_len={len(content)} files_count={len(files)} headers_preview={headers_preview}")
-    except Exception:
-        pass
     
-    # Валидация входных данных
+    # Validate
     validate_message_input(content, files)
     
-    # owner_id resolved by dependency
-    # The dependency returns the Supabase user id or raises 401.
-    owner_email = None
-    owner_name = None
-
-    # Подготовка окружения
-    chat_dir = ensure_chat_directory(chat_id)
+    # Don't create directory if file processing is stubbed/disabled or no files.
+    # Currently process_uploaded_files is a stub returning [], [] so chat_dir is unused for upload.
+    # We only create it if we actually have logic to save files there.
+    # For now, we removed the eager creation to avoid empty folders.
+    api_files = []
+    webhook_files = []
+    # chat_dir = ensure_chat_directory(chat_id) 
+    # api_files, webhook_files = await process_uploaded_files(files, chat_dir, chat_id)
     
-    # Обработка сообщения пользователя
-    api_files, webhook_files = await process_uploaded_files(files, chat_dir, chat_id)
-    app_logger.info("files_processed", extra={"api_files_count": len(api_files), "webhook_files_count": len(webhook_files)})
-    # Verify chat exists and user has access to it
+    # Verify chat logic
     try:
         db_chat = db.query(Chat).filter(Chat.id == chat_id).first()
         if not db_chat:
-            # Chat must exist before sending messages - it should be created via POST /chats endpoint first
-            app_logger.warning("chat_not_found_for_message", extra={"chat_id": chat_id, "owner_id": owner_id})
-            raise HTTPException(status_code=404, detail="Chat not found. Create chat first using POST /chats endpoint.")
-        
-        # Verify chat ownership
+             raise HTTPException(status_code=404, detail="Chat not found. Create chat first using POST /chats endpoint.")
         if db_chat.owner_id is None or str(db_chat.owner_id) != str(owner_id):
-            app_logger.warning("unauthorized_chat_message_attempt", extra={"chat_id": chat_id, "resolved_owner": owner_id, "chat_owner_in_db": getattr(db_chat, 'owner_id', None)})
-            raise HTTPException(status_code=404, detail="Chat not found")
+             raise HTTPException(status_code=404, detail="Chat not found")
     except HTTPException:
         raise
-    except Exception as e: 
-        # Log full exception with traceback for diagnostics
+    except Exception as e:
         app_logger.exception(f"chat_fetch_failed chat_id={chat_id}")
-        # Surface the error message to the client for easier debugging (safe for dev)
         raise HTTPException(status_code=500, detail=f"Failed to fetch chat: {str(e)}")
 
-    # Create message record
+    # User Message
     try:
         db_message = Message(
             id=str(uuid.uuid4()),
@@ -483,53 +490,34 @@ async def send_message_and_get_response(
         db.commit()
         db.refresh(db_message)
     except Exception as e:
-        app_logger.exception(f"user_message_persist_failed chat_id={chat_id}")
+        app_logger.exception("user_message_persist_failed")
         raise HTTPException(status_code=500, detail=f"Failed to persist user message: {str(e)}")
-
-    # Update chat title based on the first user message if the title is empty or default
+        
+    # Title update
     try:
-        if db_chat:
-            current_title = getattr(db_chat, 'title', None) or ''
-            default_titles = ["Новый чат", ""]
-            if current_title.strip() in default_titles:
-                # Use the user's message as the chat title (truncate to 60 chars)
-                new_title = (content.strip()[:60] + ("..." if len(content.strip()) > 60 else "")) if content else current_title
-                db_chat.title = new_title
-                db.add(db_chat)
-                db.commit()
-                db.refresh(db_chat)
-                app_logger.info("chat_title_updated", extra={"chat_id": chat_id, "new_title": new_title})
+        if db_chat and (not db_chat.title or db_chat.title == "Новый чат" or not db_chat.title.strip()):
+            new_title = (content.strip()[:60] + "...") if content and len(content.strip()) > 60 else (content.strip() or "Новый чат")
+            db_chat.title = new_title
+            db.add(db_chat)
+            db.commit()
+            db.refresh(db_chat)
     except Exception:
-        app_logger.exception("chat_title_update_failed")
+        app_logger.warning("title_update_failed")
 
-    user_message = MessageResponse(
-        id=str(db_message.id),
-        chat_id=str(db_message.chat_id),
-        role=db_message.role,
-        content=db_message.content,
-        files=api_files,
-        created_at=db_message.created_at
-    )
-
-    app_logger.info("user_message_processed", extra={"message_id": user_message.id, "chat_id": chat_id})
-
-    # Генерация ответа ассистента
-    app_logger.info("calling_generate_assistant_response", extra={"chat_id": chat_id, "webhook_files_count": len(webhook_files)})
+    # Generate Assistant Response
     try:
-        assistant_content, assistant_files = await generate_assistant_response(content, webhook_files, chat_id)
-        app_logger.info("assistant_response_generated", extra={"files_count": len(assistant_files), "content_len": len(assistant_content or "")})
+        assistant_content, assistant_files, tables, charts = await generate_assistant_response(content, webhook_files, chat_id, owner_id)
     except Exception as e:
-        app_logger.exception(f"assistant_response_failed chat_id={chat_id}")
+        app_logger.exception("assistant_generation_failed")
         raise HTTPException(status_code=500, detail=f"Assistant generation failed: {str(e)}")
-    # Persist assistant message - but first verify chat still exists
+        
+    # Assistant Message
     try:
-        # Re-check that the chat still exists before saving assistant message
-        # (user might have deleted chat while webhook was processing)
+        # Verify chat still exists
         chat_still_exists = db.query(Chat).filter(Chat.id == chat_id).first()
         if not chat_still_exists:
-            app_logger.warning("chat_deleted_during_processing", extra={"chat_id": chat_id})
-            raise HTTPException(status_code=404, detail="Chat was deleted during processing")
-        
+            raise HTTPException(status_code=404, detail="Chat was deleted")
+
         db_assistant_message = Message(
             id=str(uuid.uuid4()),
             chat_id=chat_id,
@@ -539,45 +527,64 @@ async def send_message_and_get_response(
         db.add(db_assistant_message)
         db.commit()
         db.refresh(db_assistant_message)
+
+        # Save Tables to Parquet
+        enriched_tables = []
+        if tables and isinstance(tables, list):
+            try:
+                for idx, table_data in enumerate(tables):
+                    rows = table_data.get("rows", [])
+                    headers = table_data.get("headers", [])
+                    if rows:
+                        save_table_parquet(rows, headers, str(db_assistant_message.id), idx)
+                        app_logger.info("table_parquet_saved", extra={"msg_id": db_assistant_message.id, "index": idx})
+                        
+                        # Enrich for response
+                        t_copy = table_data.copy()
+                        t_copy['download_url'] = f"/api/v1/download/table/{db_assistant_message.id}/{idx}/export.xlsx"
+                        enriched_tables.append(t_copy)
+            except Exception as e:
+                app_logger.error(f"failed_to_save_parquet_tables: {e}")
+                enriched_tables = []
+                
+    except Exception as e:
+        app_logger.exception("assistant_message_persist_failed")
+        raise HTTPException(status_code=500, detail=f"Failed to persist assistant message: {str(e)}")
     except HTTPException:
         raise
-    except Exception as e:
-        app_logger.exception(f"assistant_message_persist_failed chat_id={chat_id}")
-        raise HTTPException(status_code=500, detail=f"Failed to persist assistant message: {str(e)}")
 
-    # Save assistant files metadata in File model
+    # Save Charts
+    enriched_charts = []
     try:
-        # Persist files uploaded by the user (api_files) and link to the user message
-        for f in api_files:
-            try:
-                db_file = FileModel(
+        if charts:
+            for chart_data in charts:
+                chart_model = Chart(
                     id=str(uuid.uuid4()),
-                    chat_id=chat_id,
-                    message_id=str(db_message.id),
-                    name=f.get('name'),
-                    size=f.get('size'),
-                    type=f.get('type'),
-                    download_url=f.get('download_url'),
-                    owner_id=owner_id
-                )
-                db.add(db_file)
-                try:
-                    # flush per-row to avoid executemany batching with RETURNING which
-                    # may trigger driver/resultset mismatches for some types
-                    db.flush()
-                except Exception:
-                    app_logger.exception("flush_user_file_failed")
-                app_logger.info("user_file_saved", extra={"file_name": f.get('name'), "chat_id": chat_id, "message_id": str(db_message.id), "owner_id": owner_id})
-            except Exception:
-                app_logger.exception("persist_user_file_failed")
-
-        # Persist assistant files and link them to the assistant message
-        for f in assistant_files:
-            try:
-                db_file = FileModel(
-                    id=str(uuid.uuid4()),
-                    chat_id=chat_id,
                     message_id=str(db_assistant_message.id),
+                    owner_id=owner_id,
+                    title=chart_data.get("title", "Generated Chart"),
+                    spec=chart_data.get("spec", {})
+                )
+                db.add(chart_model)
+                enriched_charts.append({
+                    "id": chart_model.id,
+                    "title": chart_model.title,
+                    "spec": chart_model.spec
+                })
+            db.commit()
+    except Exception as e:
+        app_logger.error(f"failed_to_save_charts: {e}")
+
+    # Save Files (User & Assistant)
+    try:
+        # Helper to save files
+        def save_files_to_db(file_list, msg_id):
+            if not file_list: return
+            for f in file_list:
+                db_file = FileModel(
+                    id=str(uuid.uuid4()),
+                    chat_id=chat_id,
+                    message_id=msg_id,
                     name=f.get('name'),
                     size=f.get('size'),
                     type=f.get('type'),
@@ -585,88 +592,84 @@ async def send_message_and_get_response(
                     owner_id=owner_id
                 )
                 db.add(db_file)
-                try:
-                    db.flush()
-                except Exception:
-                    app_logger.exception("flush_assistant_file_failed")
-                app_logger.info("assistant_file_saved", extra={"file_name": f.get('name'), "chat_id": chat_id, "message_id": str(db_assistant_message.id), "owner_id": owner_id})
-            except Exception:
-                app_logger.exception("persist_assistant_file_failed")
-        # Try to commit; if DB lacks the new column, add it and retry
-        try:
-            db.commit()
-        except Exception as commit_err:
-            try:
-                from sqlalchemy.exc import ProgrammingError
-                if isinstance(commit_err, ProgrammingError) or 'message_id' in str(commit_err):
-                    app_logger.warning("commit_failed_missing_column_message_id, attempting to add column and retry")
-                    # rollback session and add column
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass
-                    try:
-                        db.execute(text('ALTER TABLE files ADD COLUMN IF NOT EXISTS message_id VARCHAR'))
-                        db.commit()
-                    except Exception:
-                        app_logger.exception("failed_to_add_message_id_column")
-                        raise
-                    # re-add file rows and commit again
-                    try:
-                        for f in api_files:
-                            db_file = FileModel(
-                                id=str(uuid.uuid4()),
-                                chat_id=chat_id,
-                                message_id=str(db_message.id),
-                                name=f.get('name'),
-                                size=f.get('size'),
-                                type=f.get('type'),
-                                download_url=f.get('download_url'),
-                                owner_id=owner_id
-                            )
-                            db.add(db_file)
-                        for f in assistant_files:
-                            db_file = FileModel(
-                                id=str(uuid.uuid4()),
-                                chat_id=chat_id,
-                                message_id=str(db_assistant_message.id),
-                                name=f.get('name'),
-                                size=f.get('size'),
-                                type=f.get('type'),
-                                download_url=f.get('download_url'),
-                                owner_id=owner_id
-                            )
-                            db.add(db_file)
-                        db.commit()
-                    except Exception:
-                        app_logger.exception("recommit_files_after_adding_column_failed")
-                        raise
-                else:
-                    app_logger.exception(f"assistant_files_persist_failed chat_id={chat_id}")
-                    raise
-            except Exception:
-                # Re-raise as HTTPException so client gets a 500
-                raise HTTPException(status_code=500, detail=f"Failed to persist assistant files: {str(commit_err)}")
+        
+        save_files_to_db(api_files, str(db_message.id))
+        save_files_to_db(assistant_files, str(db_assistant_message.id))
+        
+        db.commit()
     except Exception as e:
-        app_logger.exception(f"assistant_files_persist_failed chat_id={chat_id}")
-        raise HTTPException(status_code=500, detail=f"Failed to persist assistant files: {str(e)}")
+        # Fallback for missing column 'message_id'
+        app_logger.error(f"file_save_failed: {e}")
+        if 'message_id' in str(e):
+             try:
+                 db.rollback()
+                 db.execute(text('ALTER TABLE files ADD COLUMN IF NOT EXISTS message_id VARCHAR'))
+                 db.commit()
+                 # Retry save
+                 save_files_to_db(api_files, str(db_message.id))
+                 save_files_to_db(assistant_files, str(db_assistant_message.id))
+                 db.commit()
+             except Exception:
+                 app_logger.exception("retry_file_save_failed")
 
-    assistant_message = MessageResponse(
+    # Construct Response
+    user_msg_resp = MessageResponse(
+        id=str(db_message.id),
+        chat_id=str(db_message.chat_id),
+        role=db_message.role,
+        content=db_message.content,
+        files=api_files,
+        created_at=db_message.created_at
+    )
+    
+    asst_msg_resp = MessageResponse(
         id=str(db_assistant_message.id),
         chat_id=str(db_assistant_message.chat_id),
         role=db_assistant_message.role,
         content=db_assistant_message.content,
         files=assistant_files,
+        tables=enriched_tables,
+        charts=enriched_charts,
         created_at=db_assistant_message.created_at
     )
-
-    app_logger.info("assistant_message_generated", extra={"message_id": assistant_message.id, "chat_id": chat_id})
-
-    # Возвращаем оба сообщения
+    
     return ChatExchangeResponse(
-        user_message=user_message,
-        assistant_message=assistant_message
+        user_message=user_msg_resp,
+        assistant_message=asst_msg_resp
     )
+
+
+@router.get("/download/table/{message_id}/{table_index}/export.xlsx")
+async def download_table_excel(message_id: str, table_index: int, owner_id: str = Depends(get_current_owner)):
+    """Downloads a parquet table converted to Excel."""
+    try:
+        # Verify ownership
+        db = next(get_db())
+        msg = db.query(Message).filter(Message.id == message_id).first()
+        if not msg:
+             raise HTTPException(status_code=404, detail="Message not found")
+        
+        chat = db.query(Chat).filter(Chat.id == msg.chat_id).first()
+        if not chat or str(chat.owner_id) != str(owner_id):
+             raise HTTPException(status_code=403, detail="Access denied")
+        
+        output_stream = get_table_as_excel_stream(message_id, table_index)
+        if not output_stream:
+            raise HTTPException(status_code=404, detail="Table file not found")
+            
+        filename = f"export_{message_id}_{table_index}.xlsx"
+        
+        return StreamingResponse(
+            output_stream,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Excel download error: {e}")
+        raise HTTPException(status_code=500, detail="Download failed")
 
 
 @router.get("/debug/headers")
@@ -691,50 +694,5 @@ async def debug_headers(request: Request):
 
 @router.get("/files/{chat_id}/{file_name}")
 async def download_file(chat_id: str, file_name: str, request: Request, db: Session = Depends(get_db), owner_id: str = Depends(get_current_owner)):
-    """Скачать файл из Minio по chat_id и file_name (fileId = client-files/{chat_id}/{file_name})"""
-    req_id = _get_request_id(request)
-    headers_preview = _headers_preview_from_request(request)
-    print(f"[DEBUG] file_download_request request_id={req_id} chat_id={chat_id} file_name={file_name} resolved_owner={owner_id} headers_preview={headers_preview}")
-    app_logger.info("file_download_request", extra={"chat_id": chat_id, "file_name": file_name, "request_id": req_id, "resolved_owner": owner_id, "headers_preview": headers_preview})
-    # Verify ownership: ensure the requesting user owns the chat and that owner is set
-    try:
-        chat_row = db.query(Chat).filter(Chat.id == chat_id).first()
-        # Log DB owner info to diagnose mismatches
-        db_owner = getattr(chat_row, 'owner_id', None) if chat_row else None
-        app_logger.debug("file_download_chat_owner_check", extra={"chat_id": chat_id, "db_owner": db_owner, "resolved_owner": owner_id})
-        if not chat_row or (chat_row.owner_id is None) or (str(chat_row.owner_id) != str(owner_id)):
-            # Print to stdout for quick debug
-            print(f"[DEBUG] unauthorized_file_download_attempt request_id={req_id} chat_id={chat_id} resolved_owner={owner_id} chat_owner_in_db={db_owner}")
-            app_logger.warning("unauthorized_file_download_attempt", extra={"chat_id": chat_id, "resolved_owner": owner_id, "chat_owner_in_db": db_owner})
-            raise HTTPException(status_code=404, detail="File not found")
-    except HTTPException:
-        raise
-    except Exception:
-        app_logger.exception("file_download_ownership_check_failed")
-        raise HTTPException(status_code=404, detail="File not found")
-
-    minio = get_minio_manager_from_env()
-    bucket = "client-files"
-    # file_name may contain uuid prefix (as stored), use it directly as object key
-    object_name = f"{chat_id}/{file_name}"
-    try:
-        # Try to stat the object first so we can log a clearer error when it doesn't exist
-        try:
-            stat = minio.client.stat_object(bucket, object_name)
-            app_logger.info("minio_object_stat_ok", extra={"object": object_name, "size": getattr(stat, 'size', None), "chat_id": chat_id})
-        except Exception as e_stat:
-            app_logger.warning("minio_object_not_found_or_stat_failed", extra={"object": object_name, "error": str(e_stat), "chat_id": chat_id})
-            # Fallthrough to get_object which will raise; we still give a clear log
-        response = minio.client.get_object(bucket, object_name)
-        return StreamingResponse(
-            response,
-            media_type='application/octet-stream',
-            headers={
-                # Use RFC5987 format to support UTF-8 filenames in Content-Disposition
-                'Content-Disposition': f"attachment; filename*=UTF-8''{file_name}"
-            }
-        )
-    except Exception as e:
-        app_logger.error(f"Minio file download error: {str(e)}", extra={"object": object_name, "chat_id": chat_id, "request_id": req_id})
-        # Return a 404 with Russian message to match existing behavior
-        raise HTTPException(status_code=404, detail="Файл не найден в Minio")
+    """Скачивание файлов отключено (хранилище удалено)"""
+    raise HTTPException(status_code=404, detail="Файловое хранилище отключено")

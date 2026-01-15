@@ -1,5 +1,5 @@
-from sqlalchemy import Column, String, DateTime, Text, ForeignKey
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Column, String, DateTime, Text, ForeignKey, JSON
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy import event
 from sqlalchemy.orm import Session as SASession
@@ -11,7 +11,8 @@ class Chat(Base):
     
     id = Column(String, primary_key=True, index=True)
     title = Column(String, index=True)
-    owner_id = Column(String, ForeignKey("auth.users.id"), nullable=True, index=True)
+    # Removing ForeignKey("auth.users.id") to allow split-db (app db vs auth db)
+    owner_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
@@ -26,7 +27,7 @@ class User(Base):
     # different providers may have different schemas and selecting
     # non-existent columns leads to UndefinedColumn errors. We only need
     # the id here to validate existence and create foreign keys.
-    id = Column(String, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True)
     # Map a small, safe subset of additional read-only columns that
     # are commonly present in Supabase-managed auth.users. These are
     # used for logging/display only; the ORM listener prevents writes.
@@ -40,11 +41,22 @@ class File(Base):
     id = Column(String, primary_key=True, index=True)
     chat_id = Column(String, ForeignKey("chats.id"), nullable=True)
     message_id = Column(String, ForeignKey("messages.id"), nullable=True, index=True)
-    owner_id = Column(String, ForeignKey("auth.users.id"), nullable=True)
+    # Removing ForeignKey("auth.users.id")
+    owner_id = Column(UUID(as_uuid=True), nullable=True)
     name = Column(String, nullable=False)
     size = Column(String, nullable=True)
     type = Column(String, nullable=True)
     download_url = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Chart(Base):
+    __tablename__ = "charts"
+    id = Column(String, primary_key=True, index=True)
+    message_id = Column(String, ForeignKey("messages.id"), nullable=True, index=True)
+    # Removing ForeignKey("auth.users.id")
+    owner_id = Column(UUID(as_uuid=True), nullable=True)
+    title = Column(String, nullable=True)
+    spec = Column(JSON, nullable=False) # Stores the Vega-Lite JSON spec
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Message(Base):
@@ -54,9 +66,11 @@ class Message(Base):
     chat_id = Column(String, ForeignKey("chats.id"), nullable=False)
     role = Column(String, nullable=False)  # 'user' или 'assistant'
     content = Column(Text, nullable=False)
+    # tables column removed, data stored in parquet files
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     chat = relationship("Chat", back_populates="messages")
+    charts = relationship("Chart", backref="message", cascade="all, delete-orphan")
 
 
 # Enforce read-only constraint for auth.users at the ORM level.

@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Any
 
 # Схемы для файлов
 class FileData(BaseModel):
@@ -12,6 +12,21 @@ class FileData(BaseModel):
     fileId: Optional[str] = None
     message_id: Optional[str] = None
     id: Optional[str] = None
+
+# Схемы для таблиц
+class TableData(BaseModel):
+    headers: List[str]
+    rows: List[List[Any]]
+    title: Optional[str] = None
+    download_url: Optional[str] = None  # URL для скачивания Excel
+
+
+# Схемы для графиков
+class ChartData(BaseModel):
+    id: Optional[str] = None
+    title: Optional[str] = None
+    spec: Any # JSON spec
+
 
 # Схемы для чатов
 class ChatCreate(BaseModel):
@@ -39,6 +54,8 @@ class MessageResponse(BaseModel):
     role: str
     content: str
     files: Optional[List[FileData]] = []
+    tables: Optional[List[TableData]] = []
+    charts: Optional[List[ChartData]] = []
     created_at: datetime
     owner_id: Optional[str] = None
     

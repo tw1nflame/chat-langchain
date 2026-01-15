@@ -333,6 +333,8 @@ function App() {
       role: m.role,
       content: m.content,
       files: m.files || [],
+      tables: m.tables || [],
+      charts: m.charts || [],
       timestamp: m.created_at ? new Date(m.created_at) : new Date(),
       createdAt: m.created_at ? new Date(m.created_at) : new Date(),
       owner_id: m.owner_id || null,
@@ -393,6 +395,8 @@ function App() {
             role: m.role,
             content: m.content,
             files: m.files || [],
+            tables: m.tables || [],
+            charts: m.charts || [],
             timestamp: m.created_at ? new Date(m.created_at) : new Date(),
             createdAt: m.created_at ? new Date(m.created_at) : new Date(),
             owner_id: m.owner_id || null,
@@ -414,6 +418,8 @@ function App() {
             role: m.role,
             content: m.content,
             files: m.files || [],
+            tables: m.tables || [],
+            charts: m.charts || [],
             // frontend Message component expects `timestamp` property (used for toLocaleTimeString())
             timestamp: m.created_at ? new Date(m.created_at) : new Date(),
             // also keep createdAt for other parts of the UI if needed

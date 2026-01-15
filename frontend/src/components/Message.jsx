@@ -1,11 +1,61 @@
-import ReactMarkdown from "react-markdown"
+"use client"
+
+import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { getCurrentSession } from "../lib/supabaseClient"
+import { useEffect, useRef } from "react"
+// import vegaEmbed from "vega-embed" -> Moved to dynamic import
 
 // Runtime-safe API base: prefer Next.js public env var, fallback to Vite-style, then localhost.
 const API_BASE = 
   (typeof process !== 'undefined' && process.env && (process.env.NEXT_PUBLIC_API_BASE_URL || process.env.VITE_API_BASE_URL)) ||
-  "http://localhost:8001"
+  "http://localhost:8000"
+
+const VegaChart = ({ spec, title, data }) => {
+  const containerRef = useRef(null)
+
+  useEffect(() => {
+    if (containerRef.current && spec) {
+      const embedOptions = {
+        actions: { export: true, source: false, compiled: false, editor: false },
+        renderer: "svg",
+        mode: "vega-lite"
+      }
+      
+      const finalSpec = JSON.parse(JSON.stringify(spec))
+      
+      let chartData = []
+      if (data && data.headers && data.rows) {
+          chartData = data.rows.map(row => {
+              const obj = {}
+              data.headers.forEach((h, i) => {
+                  obj[h] = row[i]
+              })
+              return obj
+          })
+      }
+      
+       if (finalSpec.data && finalSpec.data.name === "table_data") {
+           delete finalSpec.data.name
+           finalSpec.data.values = chartData
+       }
+      
+      // Dynamic import to avoid SSR issues and "proper object" serialization errors
+      // if vega-embed exports non-serializable stuff or runs code at import time
+      import("vega-embed").then((module) => {
+          const embed = module.default
+          embed(containerRef.current, finalSpec, embedOptions).catch(console.error)
+      }).catch(console.error)
+    }
+  }, [spec, data])
+
+  return (
+    <div className="mb-4 bg-white p-2 rounded border border-gray-300">
+      {title && <div className="font-semibold text-sm text-gray-700 mb-2 border-b pb-1">{title}</div>}
+      <div ref={containerRef} className="w-full overflow-x-auto" />
+    </div>
+  )
+}
 
 function Message({ message }) {
   const isUser = message.role === "user"
@@ -58,7 +108,7 @@ function Message({ message }) {
           <p className="text-white text-right whitespace-pre-wrap">{message.content}</p>
         ) : (
           <div className="prose max-w-none text-gray-800">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            <Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
           </div>
         )}
 
@@ -113,6 +163,95 @@ function Message({ message }) {
               </div>
             ))}
           </div>
+        )}
+
+        {/* Таблицы */}
+        {message.tables && message.tables.length > 0 && (
+          <div className={`mt-3 pt-3 border-t ${isUser ? "border-blue-400" : "border-gray-200"}`}>
+             <div className={`text-xs mb-2 ${isUser ? "text-blue-100" : "text-gray-500"}`}>
+              {isUser ? "Таблицы:" : "Таблицы от ассистента:"}
+            </div>
+            {message.tables.map((table, index) => (
+              <div key={index} className="mb-4 overflow-hidden rounded border border-gray-300 bg-white">
+                {/* Заголовок и кнопка скачивания */}
+                <div className="bg-gray-100 p-2 flex justify-between items-center border-b border-gray-300">
+                  <span className="font-semibold text-sm text-gray-700">{table.title || `Таблица ${index + 1}`}</span>
+                   {table.download_url && (
+                    <button
+                        onClick={async (e) => {
+                            e.preventDefault();
+                            try {
+                                const session = await getCurrentSession();
+                                const token = session?.access_token;
+                                const headers = token ? { Authorization: `Bearer ${token}` } : {};
+                                const resp = await fetch(`${API_BASE}${table.download_url}`, { headers });
+                                if (!resp.ok) throw new Error(`File download failed: ${resp.status}`);
+                                const blob = await resp.blob();
+                                const url = window.URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = `${table.title || 'export'}.xlsx`;
+                                document.body.appendChild(a);
+                                a.click();
+                                a.remove();
+                                window.URL.revokeObjectURL(url);
+                            } catch (err) {
+                                console.error('Download failed', err);
+                                window.open(`${API_BASE}${table.download_url}`, '_blank');
+                            }
+                        }}
+                        className="text-xs bg-green-500 hover:bg-green-600 text-white py-1 px-2 rounded flex items-center gap-1"
+                    >
+                        Excel
+                    </button>
+                   )}
+                </div>
+                
+                {/* Сама таблица */}
+                <div className="overflow-x-auto max-h-60">
+                    <table className="min-w-full text-sm text-left text-gray-500">
+                        <thead className="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0">
+                            <tr>
+                                {table.headers.map((header, idx) => (
+                                    <th key={idx} scope="col" className="px-4 py-2 border-r last:border-r-0 border-gray-200">
+                                        {header}
+                                    </th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {table.rows.map((row, rowIdx) => (
+                                <tr key={rowIdx} className="bg-white border-b hover:bg-gray-50">
+                                    {row.map((cell, cellIdx) => (
+                                        <td key={cellIdx} className="px-4 py-2 border-r last:border-r-0 border-gray-200 whitespace-nowrap">
+                                            {typeof cell === 'object' ? JSON.stringify(cell) : String(cell)}
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Charts */}
+        {message.charts && message.charts.length > 0 && (
+            <div className={`mt-3 pt-3 border-t ${isUser ? "border-blue-400" : "border-gray-200"}`}>
+                <div className={`text-xs mb-2 ${isUser ? "text-blue-100" : "text-gray-500"}`}>
+                 {isUser ? "Графики:" : "Графики от ассистента:"}
+                </div>
+                {message.charts.map((chart, index) => (
+                    <VegaChart 
+                        key={chart.id || index} 
+                        spec={chart.spec} 
+                        title={chart.title} 
+                        data={message.tables && message.tables[0]} 
+                    />
+                ))}
+            </div>
         )}
 
         {/* Время отправки */}

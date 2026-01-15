@@ -41,8 +41,13 @@ app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
 def startup_create_tables():
     try:
         if settings.create_tables_on_startup:
-            app_logger.info("create_tables_on_startup is True — creating missing tables if any")
-            Base.metadata.create_all(bind=engine)
+            app_logger.info("create_tables_on_startup is True — creating missing tables if any (skipping auth schema)")
+            # Filter out auth tables to support split-db architecture
+            tables_to_create = [
+                table for table in Base.metadata.tables.values() 
+                if table.schema != 'auth'
+            ]
+            Base.metadata.create_all(bind=engine, tables=tables_to_create)
             app_logger.info("Database tables ensured (create_all completed)")
     except Exception as e:
         app_logger.error(f"Error creating tables on startup: {e}")

@@ -97,6 +97,8 @@ function ChatWindow({ chat, onUpdateMessages }) {
         role: response.assistantMessage.role,
         content: response.assistantMessage.content,
         files: response.assistantMessage.files || [],
+        tables: response.assistantMessage.tables || [],
+        charts: response.assistantMessage.charts || [],
         timestamp: new Date(response.assistantMessage.created_at),
       }
 
