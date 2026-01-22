@@ -31,6 +31,20 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
+    
+    # NWC Service Configuration
+    nwc_service_url: str = "http://localhost:8000"
+    
+    # Vector Database (Qdrant)
+    qdrant_path: str = "./qdrant_data"  # Path for local persistence
+    qdrant_collection_name: str = "documents"
+    
+    # Text Embeddings (Ollama/Xinference)
+    embedding_base_url: str = "http://localhost:11434"
+    embedding_model: str = "nomic-embed-text"
+    
+    # Feature Flags
+    enable_rag_update: bool = True
 
     @property
     def cors_origins_list(self) -> List[str]:

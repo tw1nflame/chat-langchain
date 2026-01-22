@@ -55,7 +55,10 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
       if (messageToSend) {
         onSendMessage(messageToSend, files)
         setMessage("")
-        // Файлы остаются - не очищаем их здесь
+        setFiles([])
+        if (onClearFiles) {
+          onClearFiles()
+        }
       }
     }
   }
@@ -63,6 +66,10 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
   const handleFileSelect = (e) => {
     const selectedFiles = Array.from(e.target.files)
     setFiles((prev) => [...prev, ...selectedFiles])
+    // Сбрасываем значение инпута, чтобы можно было выбрать тот же файл повторно
+    if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+    }
   }
 
   const removeFile = (index) => {

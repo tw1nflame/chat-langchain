@@ -460,10 +460,9 @@ async def send_message_and_get_response(
     # Currently process_uploaded_files is a stub returning [], [] so chat_dir is unused for upload.
     # We only create it if we actually have logic to save files there.
     # For now, we removed the eager creation to avoid empty folders.
-    api_files = []
-    webhook_files = []
-    # chat_dir = ensure_chat_directory(chat_id) 
-    # api_files, webhook_files = await process_uploaded_files(files, chat_dir, chat_id)
+    
+    chat_dir = ensure_chat_directory(chat_id) 
+    api_files, webhook_files = await process_uploaded_files(files, chat_dir, chat_id)
     
     # Verify chat logic
     try:
@@ -506,7 +505,9 @@ async def send_message_and_get_response(
 
     # Generate Assistant Response
     try:
-        assistant_content, assistant_files, tables, charts = await generate_assistant_response(content, webhook_files, chat_id, owner_id)
+        auth_token = hdrs.get("authorization", "").replace("Bearer ", "")
+        # Use api_files as they are the ones uploaded by the user here
+        assistant_content, assistant_files, tables, charts = await generate_assistant_response(content, api_files, chat_id, owner_id, auth_token=auth_token)
     except Exception as e:
         app_logger.exception("assistant_generation_failed")
         raise HTTPException(status_code=500, detail=f"Assistant generation failed: {str(e)}")

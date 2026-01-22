@@ -28,13 +28,33 @@ def ensure_chat_directory(chat_id: str) -> str:
 
 async def process_uploaded_files(files: List[UploadFile], chat_dir: str, chat_id: str):
     """
-    Заглушка: не загружает файлы (хранилище отключено).
-    Возвращает пустые списки.
+    Сохраняет загруженные файлы в директорию чата.
     """
-    return [], []
+    api_files = []
+    
+    # Создаем директорию если её нет
+    os.makedirs(chat_dir, exist_ok=True)
+    
+    for file in files:
+        file_path = os.path.join(chat_dir, file.filename)
+        try:
+            with open(file_path, "wb") as f:
+                content = await file.read()
+                f.write(content)
+                
+            api_files.append({
+                "name": file.filename,
+                "path": file_path,
+                "type": file.content_type,
+                "size": len(content)
+            })
+        except Exception as e:
+            app_logger.error(f"Failed to specific save file {file.filename}: {e}")
+            
+    return api_files, []
 
 
-async def generate_assistant_response(user_message: str, user_files: List[Dict[str, Any]], chat_id: str, owner_id: str) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+async def generate_assistant_response(user_message: str, user_files: List[Dict[str, Any]], chat_id: str, owner_id: str, auth_token: str = None) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Generates a response using the LangGraph agent connected to DeepSeek and the Database.
     Returns: content, files, tables, charts
@@ -46,7 +66,7 @@ async def generate_assistant_response(user_message: str, user_files: List[Dict[s
         app_logger.info("DeepSeek API key configured. Delegating to agent_graph...")
         try:
             # Run the agent
-            agent_result = await asyncio.to_thread(run_agent, user_message, owner_id)
+            agent_result = await asyncio.to_thread(run_agent, user_message, owner_id, auth_token, user_files, chat_id)
             
             # Identify result structure
             if isinstance(agent_result, dict):

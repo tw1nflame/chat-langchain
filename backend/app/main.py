@@ -12,6 +12,7 @@ from core.config import settings
 from core.logging_config import app_logger
 from core.database import engine, Base
 from core.config import settings
+from core.vector_store import init_vector_store
 
 app = FastAPI(
     title="Chat API",
@@ -49,6 +50,15 @@ def startup_create_tables():
             ]
             Base.metadata.create_all(bind=engine, tables=tables_to_create)
             app_logger.info("Database tables ensured (create_all completed)")
+            
+        # Initialize Vector Store (Qdrant)
+        app_logger.info("Initializing Vector Database...")
+        try:
+            init_vector_store()
+            app_logger.info("Vector Database initialized.")
+        except Exception as e:
+            app_logger.warning(f"Vector Database initialization warning (non-critical): {e}")
+
     except Exception as e:
         app_logger.error(f"Error creating tables on startup: {e}")
 

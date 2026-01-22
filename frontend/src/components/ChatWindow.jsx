@@ -35,11 +35,6 @@ function ChatWindow({ chat, onUpdateMessages }) {
   const handleSendMessage = async (content, files) => {
     if (isLoading) return // Блокируем отправку если уже загружается
 
-    // Сохраняем файлы для следующего сообщения если они были отправлены
-    if (files && files.length > 0) {
-      setPersistentFiles(files)
-    }
-
     // Сразу добавляем сообщение пользователя
     const userMessage = {
       id: generateUUID(),
