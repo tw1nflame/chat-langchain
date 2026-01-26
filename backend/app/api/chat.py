@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Form, File, UploadFile, Header, Request, Response
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from collections import defaultdict
 import uuid
 import os
 import shutil
+import json
 from datetime import datetime
 from core.database import get_db
 from models.chat import Chat, Message, User, File as FileModel, Chart
@@ -697,3 +698,128 @@ async def debug_headers(request: Request):
 async def download_file(chat_id: str, file_name: str, request: Request, db: Session = Depends(get_db), owner_id: str = Depends(get_current_owner)):
     """Скачивание файлов отключено (хранилище удалено)"""
     raise HTTPException(status_code=404, detail="Файловое хранилище отключено")
+
+@router.post("/temporary/chat", response_model=ChatExchangeResponse)
+async def temporary_chat_message(
+    role: str = Form(...),
+    content: str = Form(default=""),
+    previous_messages: str = Form(default="[]"),
+    files: List[UploadFile] = File(default=[]),
+    request: Request = None,
+    owner_id: str = Depends(get_current_owner),
+):
+    """
+    Stateless/Temporary chat endpoint.
+    Do NOT save chat or messages to DB.
+    Files are saved temporarily and then deleted (TODO: implement cleanup cron).
+    Note: Download links for tables/files may not be persistent or work if DB check is required.
+    """
+    # Log request
+    try:
+        hdrs = dict(request.headers) if request else {}
+    except Exception:
+        hdrs = {}
+    
+    app_logger.info(
+        "received_temp_message",
+        extra={
+            "role": role,
+            "content_length": len(content),
+            "files_count": len(files),
+        },
+    )
+    
+    # Validate
+    validate_message_input(content, files)
+    
+    # 1. Setup temporary environment
+    temp_chat_id = str(uuid.uuid4())
+    chat_dir = ensure_chat_directory(temp_chat_id) 
+    
+    try:
+        # 2. Process Files
+        api_files, webhook_files = await process_uploaded_files(files, chat_dir, temp_chat_id)
+        
+        # 3. Parse History
+        try:
+            history_data = json.loads(previous_messages)
+            history_list = []
+            if isinstance(history_data, list):
+                for m in history_data:
+                    if isinstance(m, str):
+                        history_list.append(m)
+                    elif isinstance(m, dict):
+                        # Format: "Role: Content"
+                        r = m.get("role", "unknown")
+                        c = m.get("content", "")
+                        history_list.append(f"{r}: {c}")
+        except Exception:
+            app_logger.warning("failed_to_parse_history_defaulting_to_empty")
+            history_list = []
+
+        # 4. Generate Response
+        auth_token = hdrs.get("authorization", "").replace("Bearer ", "")
+        
+        # Determine effective owner_id for this session
+        # We use the authenticated user's ID
+        
+        assistant_content, assistant_files, tables, charts = await generate_assistant_response(
+            content, 
+            api_files, 
+            temp_chat_id, 
+            owner_id, 
+            auth_token=auth_token, 
+            history=history_list
+        )
+        
+        # Assistant Message ID (Random, not in DB)
+        asst_msg_id = str(uuid.uuid4())
+        user_msg_id = str(uuid.uuid4())
+
+        # 5. Handle Tables (No DB persistence support, so no download URL for now)
+        enriched_tables = []
+        if tables:
+            for idx, table_data in enumerate(tables):
+                # We return the data directly. Download links are omitted as they require DB message lookup.
+                t_copy = table_data.copy()
+                t_copy['download_url'] = None 
+                enriched_tables.append(t_copy)
+
+        enriched_charts = []
+        if charts:
+             for chart_data in charts:
+                 enriched_charts.append({
+                    "id": str(uuid.uuid4()),
+                    "title": chart_data.get("title", "Chart"),
+                    "spec": chart_data.get("spec", {})
+                })
+
+        # 6. Response Construction
+        user_msg_resp = MessageResponse(
+            id=user_msg_id,
+            chat_id=temp_chat_id,
+            role=role,
+            content=content,
+            files=api_files,
+            created_at=datetime.utcnow()
+        )
+        
+        asst_msg_resp = MessageResponse(
+            id=asst_msg_id,
+            chat_id=temp_chat_id,
+            role="assistant",
+            content=assistant_content,
+            files=assistant_files,
+            tables=enriched_tables,
+            charts=enriched_charts,
+            created_at=datetime.utcnow()
+        )
+        
+        return ChatExchangeResponse(
+            user_message=user_msg_resp,
+            assistant_message=asst_msg_resp
+        )
+        
+    except Exception as e:
+        app_logger.exception("temporary_chat_failed")
+        raise HTTPException(status_code=500, detail=f"Temporary chat failed: {str(e)}")

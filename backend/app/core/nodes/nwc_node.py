@@ -56,8 +56,23 @@ Instructions:
 4. Filter by date/month if requested.
 5. If the user asks for "Fact" (Факт), look for a 'fact' column or similar.
 
-SPECIAL INSTRUCTIONS FOR ANALYSIS/COMPARISON:
-If the user asks to "analyze", "compare", or "check deviation" without exploring specific analysis type:
+SPECIAL INSTRUCTIONS FOR "ALL MODELS" REQUESTS:
+If the user specifically asks for "all models", "compare models", "все модели", or similar:
+- DO NOT select only the single best model column.
+- INSTEAD, select ALL available prediction columns (predict_*) alongside 'date' and 'fact'.
+- Example Columns to select: date, fact, predict_stacking_rfr, predict_ml_tabular, predict_naive, predict_autoarima, etc. (Check table schema for actual names).
+- If the table has many columns, select the top 5-7 most relevant model columns + fact.
+- Do NOT calculate deviations for every single model in the SQL unless specifically asked. Just return the raw values.
+- Still filter by `article = 'Target Article'`.
+- PIPELINE FILTERING FOR "ALL MODELS":
+   - **CRITICAL CHANGE**: If the user asks for "ALL MODELS" (все модели), assume they want data from ALL pipelines unless they specify otherwise.
+   - DO NOT filter by pipeline if the request is "all models".
+   - Select the 'pipeline' column so we can distinguish rows.
+   - Only filter by pipeline if the user explicitly names one (e.g. "all models in base pipeline").
+   - If no pipeline is mentioned, return ALL rows matching the article, regardless of pipeline.
+
+SPECIAL INSTRUCTIONS FOR ANALYSIS/COMPARISON (Single Model):
+If the user asks to "analyze", "compare", or "check deviation" without exploring specific analysis type (and NOT asking for all models):
 1. Retrieval 1 (Graph): Select 'date', 'fact', and the target model column (e.g. 'predict_stacking_rfr').
 2. Retrieval 2 (Deviation): We need data for the LATEST available 13 months in the dataset.
    - Do NOT filter using `CURRENT_DATE` or `NOW()`. 
@@ -143,7 +158,8 @@ def generate_nwc_query(state: Dict[str, Any]):
     
     # Create chain
     # We pass nwc_config as a partial variable or input
-    sql_chain = create_sql_query_chain(llm, db, prompt=prompt, k=50)
+    # k controls the limit. Increasing to 1000 to return more history.
+    sql_chain = create_sql_query_chain(llm, db, prompt=prompt, k=1000)
     
     try:
         app_logger.info(f"generate_nwc_query: generating SQL for '{question}'")
@@ -170,20 +186,24 @@ def generate_nwc_query(state: Dict[str, Any]):
             
         app_logger.info(f"generate_nwc_query: SQL generated: {cleaned_query}")
         
+        # Pass context: if specific article found in config (even if we requested 'all models'),
+        # we still want to pass the primary config info so formatting knows the 'best' model if needed,
+        # but for multi-model queries, the summary should handle it.
         result = {"query": cleaned_query}
-        if found_model or config:
-             # If we identified a specific model, pass it
-             if found_model:
-                 result["nwc_info"] = {
-                     "article": found_article, 
-                     "model": found_model,
-                     "pipeline": found_pipeline
-                 }
-             else:
-                 # Otherwise pass the full config for the summarizer to figure out
-                 result["nwc_info"] = {
-                     "config": model_article
-                 }
+        
+        # Pass the full config snapshot for the article if possible, 
+        # so later nodes know what was used.
+        if model_article:
+             result["nwc_info"] = {"config": model_article}
+        elif found_model:
+             result["nwc_info"] = {
+                 "article": found_article, 
+                 "model": found_model,
+                 "pipeline": found_pipeline
+             }
+        else:
+             # Fallback
+             result["nwc_info"] = {"config": config.get("config", {})}
              
         return result
         

@@ -54,7 +54,7 @@ async def process_uploaded_files(files: List[UploadFile], chat_dir: str, chat_id
     return api_files, []
 
 
-async def generate_assistant_response(user_message: str, user_files: List[Dict[str, Any]], chat_id: str, owner_id: str, auth_token: str = None) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+async def generate_assistant_response(user_message: str, user_files: List[Dict[str, Any]], chat_id: str, owner_id: str, auth_token: str = None, history: List[str] = None) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Generates a response using the LangGraph agent connected to DeepSeek and the Database.
     Returns: content, files, tables, charts
@@ -66,7 +66,7 @@ async def generate_assistant_response(user_message: str, user_files: List[Dict[s
         app_logger.info("DeepSeek API key configured. Delegating to agent_graph...")
         try:
             # Run the agent
-            agent_result = await asyncio.to_thread(run_agent, user_message, owner_id, auth_token, user_files, chat_id)
+            agent_result = await asyncio.to_thread(run_agent, user_message, owner_id, auth_token, user_files, chat_id, history)
             
             # Identify result structure
             if isinstance(agent_result, dict):

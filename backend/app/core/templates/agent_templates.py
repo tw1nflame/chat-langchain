@@ -180,6 +180,9 @@ Otherwise (if SQL was executed):
   - Use the phrase "Полученный прогноз по модели [Model] (пайплайн [Pipeline])..." 
   - DO NOT use the word "сгенерированный" (generated) or "Generated".
   - Example: "Полученный прогноз по статье [Article] с использованием модели [Model] (пайплайн [Pipeline])..."
+- SPECIAL CHECK: If the dataset shows the latest (most recent by date) row has a Forecast value but MISSING/NULL Fact:
+  - Compare this Latest Forecast with the Fact from the PREVIOUS month (the row immediately preceding the latest).
+  - Explicitly mention this comparison in the text (e.g. "Прогноз на [Month] составляет X, что отличается от факта предыдущего месяца (Y) на Z...").
 - Calculate and mention "Relative Deviation" (%) and "Absolute Deviation" ONLY if the user's question contains analytical keywords like "compare", "analyze", "difference", "deviation", "variance", "accuracy", "check" (or Russian equivalents: "сравнить", "проанализировать", "отклонение", "разница").
 
 Response: """
@@ -191,6 +194,8 @@ Your goal is to create a step-by-step plan to answer the user's question.
 Available Actions:
 - GENERATE_SQL: Generate a SQL query to retrieve general data.
 - GENERATE_NWC_SQL: Use this INSTEAD of GENERATE_SQL if the query is about "ЧОК" (NWC) or mentions specific NWC articles.
+  - KEYWORDS: "Торговая ДЗ", "Прочая ДЗ", "Авансы", "Налоги", "Кредиторская задолженность", "Резерв", "Задолженность", "Торговая КЗ".
+  - Use this even if the user verbs are "extract", "get", "find" (e.g., "извлеки данные по торговой кз").
 - EXECUTE_SQL: Execute the generated SQL query and format the results.
 - GENERATE_VIZ: Generate a visualization (chart) based on the data.
 - UPDATE_RAG: Process attached Word documents (.docx) to update the knowledge base/vector store.
@@ -199,6 +204,7 @@ Available Actions:
   - Only use UPDATE_RAG if the user wants to ADD the file to the system.
 - RETRIEVE_RAG: Search the knowledge base (vector store) for information.
   - Use when the user asks a question that might be in the uploaded documents.
+  - DO NOT use this if the question is about specific financial articles (NWC, tax, debt) - use GENERATE_NWC_SQL instead.
   - Keywords: "search", "find", "what is", "tell me about", "поиск", "найди", "что написано в", "concerning".
   - If the question is NOT about SQL/Data but about general knowledge or document content, use this.
 - TRAIN_MODEL: Call the external NWC service. Use this ONLY if the user explicitly asks to "start", "run", "launch", "train" a forecast/model. 
@@ -207,7 +213,9 @@ Available Actions:
 - SUMMARIZE: Summarize the findings and answer the user.
 
 Rules:
-1. If the user asks for data (e.g. "show sales", "compare results", "get forecast"), you MUST include a generation step (GENERATE_SQL or GENERATE_NWC_SQL) followed by EXECUTE_SQL.
+1. If the user asks for data (e.g. "show sales", "compare results", "get forecast", "extract data"), you MUST include a generation step (GENERATE_SQL or GENERATE_NWC_SQL) followed by EXECUTE_SQL.
+  - Check if the data request is for "NWC" or specific articles (receivables, payables, taxes). If so, use GENERATE_NWC_SQL.
+  - Use GENERATE_NWC_SQL for "extract data for X" where X is a financial bucket.
 2. If the user explicitly asks for a chart, plot, or graph, OR if the data is time-series/categorical and suitable for visualization, you SHOULD include GENERATE_VIZ.
 3. Use TRAIN_MODEL ONLY if the user asks to START/RUN a process (e.g. "run forecast", "start training").
    - Explicitly DISTINGUISH between "update forecast/model" (TRAIN_MODEL) and "update RAG/knowledge" (UPDATE_RAG).

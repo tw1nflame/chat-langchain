@@ -189,7 +189,9 @@ def call_nwc_train(state: GraphState):
     2. Items:
        - List of strings representing specific items/articles/categories.
        - CRITICAL: Check Context for items mentioned in previous turns (e.g., "по статье X", "for item Y").
+       - Check the Current Request for specific items involved (e.g. "Торговая КЗ", "Прочая ДЗ").
        - Example: If history has "Forecast for Item A" and current request is "base", return ["Item A"].
+       - Example: If request is "base for Торговая КЗ", return ["Торговая КЗ"].
        - Return ["__all__"] ONLY if "all"/"everything" is explicitly requested or NO specific items exist in Request OR Context.
        
     3. Date:
@@ -559,7 +561,7 @@ memory = MemorySaver()
 # Compile with checkpointer
 graph = builder.compile(checkpointer=memory)
 
-def run_agent(query: str, owner_id: str, auth_token: str = None, files: List[dict] = None, thread_id: str = None):
+def run_agent(query: str, owner_id: str, auth_token: str = None, files: List[dict] = None, thread_id: str = None, history: List[str] = None):
     """
     Executes the Planner -> Executor pipeline.
     Returns a dict with 'content' and 'tables'
@@ -578,35 +580,20 @@ def run_agent(query: str, owner_id: str, auth_token: str = None, files: List[dic
             "result": None,
             "tables": [],
             "charts": []
-            # Do NOT reset files or history here if we want persistence, 
-            # but we need to feed new data. 
-            # If files are provided, we update them.
-            # If not provided, we rely on state (if checkedpointer handles merging, which TypedDict overwrite does not do for missing keys in input)
-            # Actually, Graph execution with checkpointer:
-            # The state retrieved from storage is merged with the input.
-            # State keys NOT in input are PRESERVED.
         }
         
         if files:
             inputs["files"] = files
             
-        # Manually append to history in inputs? 
-        # Or rely on a reducer? TypedDict replaces.
-        # So we need to read state? No, invoke receives inputs.
-        # We can implement a "reducer" in GraphState, but TypedDict doesn't support it easily without Annotated.
-        # Hack: We can't append to history easily without reading first or using Annotated.
-        # Let's use Annotated for chat_history in a future refactor.
-        # For now, to support history:
-        # We will just rely on the fact that we can't easily append without Annotated.
-        # However, to solve the immediate request ("keep file"), suppressing "files": [] is enough.
-        
         # Config for thread
-        config = {"configurable": {"thread_id": thread_id}} if thread_id else {"configurable": {"thread_id": owner_id}} # Fallback to owner_id if no thread
+        config = {"configurable": {"thread_id": thread_id}} if thread_id else {"configurable": {"thread_id": owner_id}} 
         
-        # But wait, if I want to append to history, I can't do it blindly.
-        # I will update the graph state definition to use Annotated for correct appending? 
-        # Or just read the current state?
-        if thread_id:
+        # Handle History
+        # If explicit history provided (Stateless/Temporary mode), use it + query
+        if history is not None:
+             inputs["chat_history"] = history + [query]
+        # Otherwise, rely on MemorySaver state if thread_id exists
+        elif thread_id:
              current_state = graph.get_state(config)
              if current_state and current_state.values:
                   current_history = current_state.values.get("chat_history", [])
