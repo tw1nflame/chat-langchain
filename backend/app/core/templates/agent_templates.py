@@ -134,6 +134,7 @@ Chart Generated: {has_chart}
 Previous Step Result: {previous_result}
 
 IMPORTANT INSTRUCTIONS:
+0. If a Knowledge Base Context (RAG content) is present, DO NOT INVENT OR ASSUME any facts beyond what is provided there. You MUST only summarize, paraphrase, or quote the retrieved RAG content. If the RAG content is missing, incomplete, or uncertain, explicitly say so in Russian (e.g., "Нет достаточной информации в базе знаний" or "Информация не найдена/не подтверждена") and ask for clarification.
 1. PRIORITIZE the "User Question" over "History". The "History" is provided for context only.
 2. If the "User Question" and provided results contain sufficient information to execute the task, DO NOT use "History".
 3. Only use "History" if the "User Question" is ambiguous or refers back to previous interactions.
@@ -206,6 +207,7 @@ Available Actions:
   - Use when the user asks a question that might be in the uploaded documents.
   - DO NOT use this if the question is about specific financial articles (NWC, tax, debt) - use GENERATE_NWC_SQL instead.
   - Keywords: "search", "find", "what is", "tell me about", "поиск", "найди", "что написано в", "concerning".
+  - CRITICAL: When you use RETRIEVE_RAG, the subsequent SUMMARIZE step MUST NOT invent or add facts not present in the retrieved content. Only summarize/paraphrase the RAG results. If the retrieved content is incomplete or ambiguous, explicitly state that and request clarification.
   - If the question is NOT about SQL/Data but about general knowledge or document content, use this.
 - TRAIN_MODEL: Call the external NWC service. Use this ONLY if the user explicitly asks to "start", "run", "launch", "train" a forecast/model. 
   - DO NOT use this for "update RAG" or document processing.
@@ -217,6 +219,7 @@ Rules:
   - Check if the data request is for "NWC" or specific articles (receivables, payables, taxes). If so, use GENERATE_NWC_SQL.
   - Use GENERATE_NWC_SQL for "extract data for X" where X is a financial bucket.
 2. If the user explicitly asks for a chart, plot, or graph, OR if the data is time-series/categorical and suitable for visualization, you SHOULD include GENERATE_VIZ.
+  - EXCEPTION: If the user's phrasing explicitly requests only to "just output" the data (Russian examples: "просто выведи", "выведи", "только выведи", "без графика"), or otherwise clearly indicates they want only a tabular/textual output without visualization, DO NOT include GENERATE_VIZ in the plan. When in doubt, prefer NOT to generate a chart and ask a short clarification (e.g., "Вы хотите график или просто табличный вывод?").
 3. Use TRAIN_MODEL ONLY if the user asks to START/RUN a process (e.g. "run forecast", "start training").
    - Explicitly DISTINGUISH between "update forecast/model" (TRAIN_MODEL) and "update RAG/knowledge" (UPDATE_RAG).
    - "обнови rag" -> UPDATE_RAG.

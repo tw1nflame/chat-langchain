@@ -48,10 +48,26 @@ Instructions:
    - IF the table has columns like 'date', 'article', 'auto_arima', 'tft', ... THEN select the column corresponding to the target model.
    - Use the "NWC Configuration" above to find the target model AND pipeline for the requested article.
    - IMPORTANT: You MUST filter by the 'pipeline' specified in the config (e.g. `pipeline = 'base'` or `pipeline = 'base+'`).
+   - NOTE (целевые модели): If the user explicitly asks for "целевые модели" or phrases like "только целевые модели" / "target models" / "по целевым моделям", you MUST AUTOMATICALLY use the configured pipeline for each article when generating the SQL. In practice this means:
+       - (a) select only the configured target model column(s) for each article, AND
+       - (b) add a pipeline filter for that article (e.g. `pipeline = 'base'` or `pipeline = 'base+'`).
+       - If multiple articles are requested, apply each article's configured pipeline accordingly (per-article pipeline filtering). Do NOT treat "целевые модели" as an "all models" request — pipeline filtering is REQUIRED and must be enforced automatically by the SQL.
    - Example 1: If config says "Торговая ДЗ": "model": "stacking_rfr", "pipeline": "base+", then select 'stacking_rfr' data where `article = 'Торговая ДЗ'` AND `pipeline = 'base+'`.
    - Example 2: If config says "Прочие налоги": "model": "autoarima", "pipeline": "base", then select 'autoarima' data where `article = 'Прочие налоги'` AND `pipeline = 'base'`.
 3. Filter by the specific 'article' requested.
    - CRITICAL: You MUST use the EXACT spelling of the article key from the "NWC Configuration" JSON above.
+   - SPECIAL CASE — "ALL NWC ARTICLES": If the user explicitly asks for "all NWC articles", "все статьи ЧОК", "все статьи чок", "все статьи NWC" or similar phrasing meaning "all articles from the NWC set", you MUST interpret this as selecting ALL article keys listed in the provided NWC Configuration. In that case:
+       - Do NOT use a substring or pattern match like `article LIKE '%ЧОК%'`.
+       - Use an explicit `article IN (...)` clause containing the canonical article names from the config (apply the "IMPORTANT MAPPING" below when needed, e.g., map "Торговая ДЗ" -> "Торговая ДЗ_USD").
+       - If multiple articles are requested together (e.g., "все статьи чок по целевым моделям"), you MUST also apply per-article pipeline filters for target models (see NOTE (целевые модели) above).
+       - If the NWC Configuration is missing or empty, explicitly ask for clarification in Russian instead of guessing.
+       - EXPLICIT SQL EXAMPLE (for clarity):
+         SELECT date, article, fact, <model_column> AS forecast_value, pipeline
+         FROM results_data
+         WHERE article IN ('Торговая ДЗ_USD', 'Прочая ДЗ', 'Авансы выданные и расходы будущих периодов', ...)
+         AND pipeline IN ('base','base+')  -- when "целевые модели" requested or when target pipeline required
+         ORDER BY date DESC;
+   - IMPORTANT MAPPING: If the user mentions "Торговая ДЗ", the value stored in the database is "Торговая ДЗ_USD" — you MUST use "Торговая ДЗ_USD" in the WHERE clause when filtering for this article. For other articles, use the article name as provided in the config.
    - DO NOT correct typos. The database expects the exact string from the config (e.g. if config has "Кредиторская задлолженность по ОС", use exactly that).
 4. Filter by date/month if requested.
 5. If the user asks for "Fact" (Факт), look for a 'fact' column or similar.

@@ -478,7 +478,7 @@ def generate_summary(state: GraphState):
              nwc_context = f"\nNWC Info: Used model '{nwc_info.get('model')}' (Pipeline: '{nwc_info.get('pipeline')}') for article '{nwc_info.get('article')}'."
 
     rag_context = state.get("rag_context", "")
-    rag_info = f"\n\nKnowledge Base Context:\n{rag_context}" if rag_context else ""
+    rag_info = f"\n\nKnowledge Base Context (IMPORTANT: do NOT invent or assume facts. Use only this content; if it is missing or unclear, explicitly say so and ask for clarification):\n{rag_context}" if rag_context else ""
 
     try:
         response = summary_chain.invoke({
