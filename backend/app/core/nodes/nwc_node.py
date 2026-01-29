@@ -4,7 +4,7 @@ import json
 import re
 import logging
 import yaml
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from langchain_community.utilities import SQLDatabase
 from langchain_openai import ChatOpenAI
 from langchain.chains import create_sql_query_chain
@@ -226,3 +226,361 @@ def generate_nwc_query(state: Dict[str, Any]):
     except Exception as e:
         app_logger.error(f"generate_nwc_query: Error: {e}")
         return {"query": "ERROR", "result": f"Failed to generate NWC SQL: {str(e)}"}
+
+
+def nwc_analyze(state: Dict[str, Any]):
+    """
+    Node to analyze the forecast for a single article.
+    Behavior:
+      - Use LLM to extract: article name (MUST be one of configured articles), optional model, optional date.
+      - If model is missing, use the target model from config for the article.
+      - If date is missing, fetch the latest forecast date from DB for that article/pipeline/model and use it.
+      - Return SQL retrieving the last 13 rows (<= target_date) ordered by date DESC, including abs/rel deviations.
+    """
+    question = state.get("question", "")
+    auth_token = state.get("auth_token")
+
+    app_logger.info(f"nwc_analyze: processing question='{question[:160]}'")
+
+    config = fetch_nwc_config(auth_token)
+    model_article = config.get("model_article", {})
+    default_articles = config.get("default_articles") or list(model_article.keys())
+
+    if not model_article:
+        app_logger.warning("nwc_analyze: model_article config is empty or unavailable")
+        return {"result": "Не удалось получить конфигурацию NWC. Пожалуйста, попробуйте позже."}
+
+    # Ask LLM to extract article, model (optional) and date (optional) in JSON
+    extraction_prompt = f"""
+    Extract the target article, optional model, and optional date from the user's request for NWC analysis.
+
+    Valid article names (must match one of these exactly): {json.dumps(default_articles, ensure_ascii=False)}
+
+    User message: "{question}"
+
+    Return ONLY JSON with the following keys:
+      - article: the exact article name from the list above, or "MISSING" if no valid article is present.
+      - model: optional model string (e.g., "stacking_rfr"), or null if not specified.
+      - date: optional target date in ISO format (YYYY-MM-DD). If the user mentions only a month/year, return the date as the LAST day of that month (YYYY-MM-DD). Return null if not specified.
+      - pipeline: optional pipeline string (e.g., "base" or "base+"), or null if not specified. If provided, it should be used as-is (case-insensitive). If missing, the node will use the pipeline from config or default to "base".
+
+    Examples:
+    {{"article":"Торговая ДЗ","model":"stacking_rfr","date":"2025-12-31","pipeline":"base+"}}
+    {{"article":"Прочая ДЗ","model":null,"date":null,"pipeline":null}}
+    {{"article":"MISSING"}}
+    """
+
+    try:
+        app_logger.info("nwc_analyze: invoking LLM for parameter extraction")
+        resp = llm.invoke(extraction_prompt)
+        content = resp.content.strip()
+        app_logger.info(f"nwc_analyze: LLM raw response: {content}")
+
+        match = re.search(r"```json(.*?)```", content, re.DOTALL | re.IGNORECASE)
+        if match:
+            content = match.group(1).strip()
+        elif content.startswith("``"):
+            content = content.strip("`")
+
+        params = json.loads(content)
+    except Exception as e:
+        app_logger.error(f"nwc_analyze: Failed to extract params via LLM: {e}")
+        return {"result": "Не удалось понять запрос. Пожалуйста, укажите статью в виде 'Проанализируй прогноз на <название статьи>'."}
+
+    article = params.get("article") if isinstance(params, dict) else None
+    extracted_model = params.get("model") if isinstance(params, dict) else None
+    extracted_date = params.get("date") if isinstance(params, dict) else None
+
+    # Validate article
+    if not article or article == "MISSING" or article not in model_article:
+        sample = ", ".join(default_articles[:12])
+        return {"result": f"Пожалуйста, уточните статью для анализа. Возможные варианты: {sample}..."}
+
+    details = model_article.get(article, {})
+    target_model = extracted_model or details.get("model")
+    extracted_pipeline = params.get("pipeline") if isinstance(params, dict) else None
+    # Priority: extracted_pipeline (from user message) -> pipeline from config -> default 'base'
+    pipeline = (extracted_pipeline or details.get("pipeline") or "base").lower()
+
+    model_source = "request" if extracted_model and extracted_model.lower() not in ("target", "целев", "целевые", "по целевым") else "config"
+
+    if not target_model:
+        app_logger.warning(f"nwc_analyze: No target model found for article '{article}'")
+        target_model = "naive"
+
+    # DB article mapping special case
+    db_article = article
+    if article == "Торговая ДЗ":
+        db_article = "Торговая ДЗ_USD"
+
+    # Build model column name (predict_<model>) and sanitize
+    model_col = f"predict_{target_model.lower()}"
+    model_col = re.sub(r"[^a-z0-9_]", "_", model_col.lower())
+
+    # Determine target_date: use extracted_date if provided, else fetch latest date from DB for this article/pipeline/model
+    target_date = None
+    if extracted_date:
+        target_date = extracted_date
+    else:
+        # Try to find latest date where model predictions exist
+        try:
+            with engine.connect() as conn:
+                sql = text(f"SELECT MAX(date) AS max_date FROM results_data WHERE article = :article AND pipeline = :pipeline AND {model_col} IS NOT NULL")
+                res = conn.execute(sql, {"article": db_article, "pipeline": pipeline}).fetchone()
+                max_date = res[0] if res is not None else None
+                if max_date:
+                    # Convert to ISO date string
+                    if hasattr(max_date, "isoformat"):
+                        target_date = max_date.isoformat()
+                    else:
+                        target_date = str(max_date)
+                else:
+                    app_logger.warning(f"nwc_analyze: No forecast rows found for article={db_article}, pipeline={pipeline}, model_col={model_col}")
+                    return {"result": "В базе нет доступных прогнозов для указанной статьи/модели. Пожалуйста, уточните запрос."}
+        except Exception as e:
+            app_logger.error(f"nwc_analyze: DB error while fetching latest date: {e}")
+            return {"result": "Ошибка при обращении к базе данных при получении даты. Попробуйте позже."}
+
+    # Final SQL: get last 13 rows up to target_date
+    query = f"""SELECT
+    date,
+    article,
+    fact,
+    {model_col} AS forecast_value,
+    pipeline,
+    (fact - {model_col}) AS abs_deviation,
+    (fact - {model_col}) / NULLIF(fact, 0) AS rel_deviation
+FROM results_data
+WHERE article = '{db_article}'
+  AND pipeline = '{pipeline}'
+  AND date <= '{target_date}'
+ORDER BY date DESC
+LIMIT 13;"""
+
+    app_logger.info(f"nwc_analyze: Generated query for article '{article}', model='{target_model}', pipeline='{pipeline}', date='{target_date}'")
+
+    return {
+        "query": query,
+        "nwc_info": {"article": article, "model": target_model, "pipeline": pipeline, "target_date": target_date, "model_source": model_source}
+    }
+
+
+def nwc_show_forecast(state: Dict[str, Any]):
+    """
+    Node to show forecast for multiple articles (or all).
+    Behavior:
+      - Use LLM to extract: list of articles (array) or 'ALL', optional model (applies to all), optional pipeline, optional date.
+      - If model is provided in prompt: use it for ALL articles; pipeline defaults to 'base' if not provided.
+      - If model is NOT provided: use per-article target model and pipeline from config.
+      - If date not provided: find the latest available date across the selected article/model/pipeline combinations and use it.
+      - Return SQL selecting rows for the selected articles on the chosen date, with a CASE for forecast_value when different models are used.
+      - Do NOT generate visualizations.
+    """
+    question = state.get("question", "")
+    auth_token = state.get("auth_token")
+
+    app_logger.info(f"nwc_show_forecast: processing question='{question[:160]}'")
+
+    config = fetch_nwc_config(auth_token)
+    model_article = config.get("model_article", {})
+    default_articles = config.get("default_articles") or list(model_article.keys())
+
+    if not model_article:
+        app_logger.warning("nwc_show_forecast: model_article config is empty or unavailable")
+        return {"result": "Не удалось получить конфигурацию NWC. Пожалуйста, попробуйте позже."}
+
+    extraction_prompt = f"""
+    Extract the list of articles (or 'ALL'), optional model, optional pipeline, and optional date from the user's request for showing forecasts.
+
+    Valid article names (must match one of these exactly): {json.dumps(default_articles, ensure_ascii=False)}
+
+    User message: "{question}"
+
+    Return ONLY JSON with keys:
+      - articles: array of article names (from list above) OR the string "ALL" if the user requests all articles.
+      - model: optional model string to use for ALL articles (e.g., "autoarima"), or null if not specified.
+      - pipeline: optional pipeline string (e.g., "base", "base+"), or null if not specified.
+      - date: optional target date in ISO (YYYY-MM-DD), or null if not specified.
+
+    Examples:
+    {{"articles":["Торговая ДЗ","Торговая КЗ"],"model":null,"pipeline":null,"date":"2025-12-31"}}
+    {{"articles":"ALL","model":null,"pipeline":null,"date":null}}
+    {{"articles":["Прочая ДЗ"],"model":"autoarima","pipeline":"base","date":null}}
+    """
+
+    try:
+        app_logger.info("nwc_show_forecast: invoking LLM for parameter extraction")
+        resp = llm.invoke(extraction_prompt)
+        content = resp.content.strip()
+        app_logger.info(f"nwc_show_forecast: LLM raw response: {content}")
+
+        match = re.search(r"```json(.*?)```", content, re.DOTALL | re.IGNORECASE)
+        if match:
+            content = match.group(1).strip()
+        elif content.startswith("``"):
+            content = content.strip("`")
+
+        params = json.loads(content)
+    except Exception as e:
+        app_logger.error(f"nwc_show_forecast: Failed to extract params via LLM: {e}")
+        return {"result": "Не удалось понять запрос. Пожалуйста, укажите статью(и) в виде 'Выведи прогноз по всем статьям на декабрь 2025' или перечислите статьи."}
+
+    # Parse params
+    articles_param = params.get("articles") if isinstance(params, dict) else None
+    extracted_model = params.get("model") if isinstance(params, dict) else None
+    extracted_pipeline = params.get("pipeline") if isinstance(params, dict) else None
+    extracted_date = params.get("date") if isinstance(params, dict) else None
+
+    # Resolve articles list
+    if isinstance(articles_param, str) and articles_param.upper() == "ALL":
+        articles = list(model_article.keys())
+    elif isinstance(articles_param, list):
+        articles = articles_param
+    else:
+        # try to detect single article name in the user question (fallback)
+        lower_q = question.lower()
+        articles = []
+        for art in sorted(model_article.keys(), key=lambda x: -len(x)):
+            if art.lower() in lower_q:
+                articles.append(art)
+        if not articles:
+            sample = ", ".join(default_articles[:12])
+            return {"result": f"Пожалуйста, уточните, по каким статьям вы хотите вывести прогноз. Возможные варианты: {sample}..."}
+
+    # Validate articles
+    invalid = [a for a in articles if a not in model_article]
+    if invalid:
+        return {"result": f"Найдены неизвестные статьи: {', '.join(invalid)}. Пожалуйста, используйте названия из конфигурации."}
+
+    # Determine per-article model and pipeline
+    model_map = {}
+    pipeline_map = {}
+
+    # Build allowed models set from config
+    allowed_models = set()
+    models_cfg = config.get("models_to_use") or {}
+    for m in models_cfg.keys():
+        allowed_models.add(m.lower())
+    for details in model_article.values():
+        if details.get("model"):
+            allowed_models.add(details.get("model").lower())
+
+    # Detect if user asked 'по целевым моделям' or similar
+    use_target_models = False
+    if extracted_model:
+        em_lower = extracted_model.lower()
+        if any(sub in em_lower for sub in ["целев", "по целев", "target"]):
+            use_target_models = True
+            extracted_model = None
+        elif em_lower not in allowed_models:
+            # unknown model specified
+            sample = ", ".join(sorted(list(allowed_models))[:10])
+            return {"result": f"Неизвестная модель '{extracted_model}'. Возможные модели: {sample}..."}
+
+    if extracted_model:
+        # apply single model for all; pipeline defaults to 'base' if not provided
+        for a in articles:
+            model_map[a] = extracted_model
+            pipeline_map[a] = (extracted_pipeline or "base").lower()
+        model_source = "request"
+    else:
+        # use per-article target models from config
+        for a in articles:
+            details = model_article.get(a, {})
+            model_map[a] = details.get("model") or None
+            pipeline_map[a] = (details.get("pipeline") or "base").lower()
+        model_source = "config"
+
+    # If user explicitly requested target models, ensure we mark it as 'config'
+    if use_target_models:
+        model_source = "config"
+
+
+    # Map DB article (special case)
+    db_articles = {}
+    for a in articles:
+        db_articles[a] = "Торговая ДЗ_USD" if a == "Торговая ДЗ" else a
+
+    # Determine target_date: use extracted_date if provided, else fetch MAX(date) across selected combos
+    target_date = None
+    if extracted_date:
+        target_date = extracted_date
+    else:
+        # Build query to get max date across article/pipeline/model combinations
+        conds = []
+        params_sql = {}
+        for idx, a in enumerate(articles):
+            model_name = model_map.get(a)
+            art_param = f"a{idx}"
+            pipe_param = f"p{idx}"
+            if model_name:
+                model_col = f"predict_{model_name.lower()}"
+                model_col = re.sub(r"[^a-z0-9_]", "_", model_col.lower())
+                conds.append(f"(article = :{art_param} AND pipeline = :{pipe_param} AND {model_col} IS NOT NULL)")
+            else:
+                # No specific model for this article - allow any non-null forecast row for this article/pipeline
+                conds.append(f"(article = :{art_param} AND pipeline = :{pipe_param})")
+            params_sql[art_param] = db_articles[a]
+            params_sql[pipe_param] = pipeline_map[a]
+
+        sql = text(f"SELECT MAX(date) AS max_date FROM results_data WHERE {' OR '.join(conds)}")
+        try:
+            with engine.connect() as conn:
+                res = conn.execute(sql, params_sql).fetchone()
+                max_date = res[0] if res is not None else None
+                if max_date:
+                    target_date = max_date.isoformat() if hasattr(max_date, "isoformat") else str(max_date)
+                else:
+                    return {"result": "В базе нет доступных прогнозов для запрошенных статей/моделей. Пожалуйста, уточните запрос."}
+        except Exception as e:
+            app_logger.error(f"nwc_show_forecast: DB error while fetching latest date: {e}")
+            return {"result": "Ошибка при обращении к базе данных при получении даты. Попробуйте позже."}
+
+    # Build CASE for forecast_value and model name
+    case_lines = []
+    model_case_lines = []
+    for a in articles:
+        db_a = db_articles[a]
+        model_name = model_map.get(a)
+        if not model_name:
+            # No model specified for this article -> return NULL so downstream can handle missing forecasts
+            case_lines.append(f"WHEN article = '{db_a}' THEN NULL")
+            model_case_lines.append(f"WHEN article = '{db_a}' THEN NULL")
+        else:
+            model_col = f"predict_{model_name.lower()}"
+            model_col = re.sub(r"[^a-z0-9_]", "_", model_col.lower())
+            case_lines.append(f"WHEN article = '{db_a}' THEN {model_col}")
+            # model column should contain the model name as string
+            model_case_lines.append(f"WHEN article = '{db_a}' THEN '{model_name}'")
+
+    case_expr = "\n    ".join(case_lines)
+    model_case_expr = "\n    ".join(model_case_lines)
+
+    # Build where clause for pipelines per article
+    pipeline_conds = []
+    for a in articles:
+        db_a = db_articles[a]
+        p = pipeline_map[a]
+        pipeline_conds.append(f"(article = '{db_a}' AND pipeline = '{p}')")
+
+    where_clause = f"article IN ({', '.join([f"'{db_articles[a]}'" for a in articles])}) AND ( {' OR '.join(pipeline_conds)} ) AND date = '{target_date}'"
+
+    query = f"""SELECT
+    date,
+    article,
+    fact,
+    CASE
+    {case_expr}
+    END AS forecast_value,
+    CASE
+    {model_case_expr}
+    END AS model,
+    pipeline
+FROM results_data
+WHERE {where_clause}
+ORDER BY article;"""
+
+    app_logger.info(f"nwc_show_forecast: Generated query for articles={articles}, date={target_date}")
+
+    return {"query": query, "nwc_info": {"articles": articles, "models": model_map, "pipelines": pipeline_map, "target_date": target_date, "model_source": model_source}}
+

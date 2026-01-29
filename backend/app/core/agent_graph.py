@@ -17,7 +17,7 @@ import json
 # from utils.export_utils import save_dataframe_to_excel (Removed)
 
 import httpx
-from core.nodes.nwc_node import generate_nwc_query
+from core.nodes.nwc_node import generate_nwc_query, nwc_analyze, nwc_show_forecast
 from core.nodes.rag_node import update_rag_node, retrieve_rag_node
 
 # Initialize Database
@@ -508,6 +508,8 @@ builder.add_node("executor", executor)
 builder.add_node("next_step", next_step)
 builder.add_node("generate_query", generate_query)
 builder.add_node("nwc_query_generator", generate_nwc_query)
+builder.add_node("nwc_analyze", nwc_analyze)
+builder.add_node("nwc_show_forecast", nwc_show_forecast)
 builder.add_node("execute_format", execute_and_format)
 builder.add_node("generate_viz", generate_viz)
 builder.add_node("call_nwc_train", call_nwc_train)
@@ -526,6 +528,8 @@ builder.add_conditional_edges(
     {
         "GENERATE_SQL": "generate_query",
         "GENERATE_NWC_SQL": "nwc_query_generator",
+        "NWC_ANALYZE": "nwc_analyze",
+        "NWC_SHOW_FORECAST": "nwc_show_forecast",
         "EXECUTE_SQL": "execute_format",
         "GENERATE_VIZ": "generate_viz",
         "TRAIN_MODEL": "call_nwc_train",
@@ -539,18 +543,13 @@ builder.add_conditional_edges(
 # After each action, go to next_step (except Summary which ends the flow)
 builder.add_edge("generate_query", "next_step")
 builder.add_edge("nwc_query_generator", "next_step")
+builder.add_edge("nwc_analyze", "next_step")
+builder.add_edge("nwc_show_forecast", "next_step")
 builder.add_edge("execute_format", "next_step")
 builder.add_edge("generate_viz", "next_step")
 builder.add_edge("call_nwc_train", "next_step")
 builder.add_edge("update_rag", "next_step")
 builder.add_edge("retrieve_rag", "next_step")
-# Special case: The user flow suggests Summary is the end. 
-# However, if planner puts SUMMARIZE in the middle (unlikely), we'd loop.
-# But for now, let's treat SUMMARIZE as a terminal node as per user request (generate_summary -> END)
-# Actually, the user's diagram had: generate_summary -> END.
-# Let's enforce that SUMMARIZE terminates the graph regardless of plan length to match previous behavior,
-# OR we can strictly follow the plan. 
-# User asked: "generate_summary -> END"
 builder.add_edge("generate_summary", END)
 
 builder.add_edge("next_step", "executor")

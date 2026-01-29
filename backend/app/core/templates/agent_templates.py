@@ -181,6 +181,7 @@ Otherwise (if SQL was executed):
   - Use the phrase "Полученный прогноз по модели [Model] (пайплайн [Pipeline])..." 
   - DO NOT use the word "сгенерированный" (generated) or "Generated".
   - Example: "Полученный прогноз по статье [Article] с использованием модели [Model] (пайплайн [Pipeline])..."
+  - IMPORTANT: If the `nwc_info` indicates that `model_source` is "config" (e.g., user requested "по целевым моделям" or did not provide a model), explicitly state that the *target models and pipelines from the configuration* were used for each article (e.g., "Для каждой статьи использовалась целевая модель и пайплайн из конфигурации"). Do NOT say the models/pipelines were specified in the user's request in this case.
 - SPECIAL CHECK: If the dataset shows the latest (most recent by date) row has a Forecast value but MISSING/NULL Fact:
   - Compare this Latest Forecast with the Fact from the PREVIOUS month (the row immediately preceding the latest).
   - Explicitly mention this comparison in the text (e.g. "Прогноз на [Month] составляет X, что отличается от факта предыдущего месяца (Y) на Z...").
@@ -209,6 +210,23 @@ Available Actions:
   - Keywords: "search", "find", "what is", "tell me about", "поиск", "найди", "что написано в", "concerning".
   - CRITICAL: When you use RETRIEVE_RAG, the subsequent SUMMARIZE step MUST NOT invent or add facts not present in the retrieved content. Only summarize/paraphrase the RAG results. If the retrieved content is incomplete or ambiguous, explicitly state that and request clarification.
   - If the question is NOT about SQL/Data but about general knowledge or document content, use this.
+- NWC_ANALYZE: Analyze forecast for a single article. Use when the user explicitly asks something like "Проанализируй прогноз на <название статьи>" or "проанализируй прогноз по статье <название>".
+  - The node should extract the article name (must be one of the configured `default_articles` / keys under `model_article`), look up the target `model` and `pipeline` in the NWC config, and generate a SQL query that returns the latest 13 rows from `results_data` for that article/pipeline and model (including `abs_deviation` and `rel_deviation`). Return ONLY the SQL query.
+  - VISUALIZATION RULE: If the user's question is an analysis request (contains words like "проанализируй","проанализировать","проанализируй прогноз","сравни","проанализируй прогноз по"), the planner SHOULD include a `GENERATE_VIZ` step immediately after `EXECUTE_SQL` in the plan to build a time-series visualization with the following requirements:
+    - X Axis: `date` (temporal)
+    - Y Axis: overlayed lines for `fact` and `abs_deviation` (or `forecast_value` if preferred). If `rel_deviation` is present, include it in the tooltip.
+    - Mark: "line" with visible points (use `point` encoding for clarity)
+    - Tooltip must include: `date` (localized), `fact` (Факт), `forecast_value` (Прогноз), `abs_deviation` (Отклонение), `rel_deviation` (Отклонение %), `pipeline` (Модель)
+    - Use `width: "container"` and `height: 300` and translate axis/tooltip titles into Russian.
+    - If the user explicitly asked for a deviation chart ("график отклонений"), follow the deviation-chart rules in the visualization template (scatter with thresholds); otherwise use the time series described above.
+- NWC_SHOW_FORECAST: Show forecast for multiple articles or all articles. Use when the user asks e.g. "выведи прогноз по всем статьям на декабрь 2025" or "выведи прогноз по статьям X, Y".
+  - The node should extract the list of articles (array) or 'ALL' from the user's request, optional model (applies to all), optional pipeline, and optional date.
+  - Rules:
+    - If a model is provided in the prompt, use it for ALL selected articles. If the pipeline is NOT provided alongside a user-specified model, default pipeline to "base". Do NOT generate visualizations for this action.
+    - If the model is NOT provided, use each article's target model and pipeline from config.
+    - If the date is not specified, determine the latest available date across the selected article/model/pipeline combos and use it for filtering.
+    - Construct a SQL that returns one row per article for the chosen date with columns: date, article, fact, forecast_value, pipeline.
+  - Example plan: [ {{ "action": "NWC_SHOW_FORECAST" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "SUMMARIZE" }} ]
 - TRAIN_MODEL: Call the external NWC service. Use this ONLY if the user explicitly asks to "start", "run", "launch", "train" a forecast/model. 
   - DO NOT use this for "update RAG" or document processing.
   - DO NOT use this if the question is "обнови rag".
@@ -237,6 +255,7 @@ Rules:
 Valid Plans (Examples):
 - [{{ "action": "GENERATE_SQL" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "GENERATE_NWC_SQL" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "GENERATE_VIZ" }}, {{ "action": "SUMMARIZE" }}]
+- [{{ "action": "NWC_ANALYZE" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "GENERATE_VIZ" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "TRAIN_MODEL" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "UPDATE_RAG" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "RETRIEVE_RAG" }}, {{ "action": "SUMMARIZE" }}]
