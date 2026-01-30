@@ -4,31 +4,13 @@ import json
 import re
 import logging
 import yaml
-from sqlalchemy import create_engine, text
-from langchain_community.utilities import SQLDatabase
-from langchain_openai import ChatOpenAI
-from langchain.chains import create_sql_query_chain
+from sqlalchemy import text
 from langchain.prompts import PromptTemplate
 from core.config import settings
+from core.nodes.shared_resources import llm, engine, db, create_sql_chain
 
 # Logger
 app_logger = logging.getLogger("uvicorn")
-
-# Re-initialize DB and LLM (to keep module self-contained and avoid circular imports)
-connect_args = {}
-if settings.agent_database_url.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
-
-engine = create_engine(settings.agent_database_url, connect_args=connect_args)
-db = SQLDatabase(engine)
-
-llm = ChatOpenAI(
-    api_key=settings.deepseek_api_key or "dummy_key",
-    base_url=settings.deepseek_base_url,
-    model=settings.deepseek_model,
-    temperature=0
-)
-
 # NWC Prompt Template
 nwc_template = """Given an input question about NWC (Net Working Capital), generate a syntactically correct {dialect} query to run.
 Unless the user specifies a specific number of examples to obtain, query for at most {top_k} results.
@@ -175,7 +157,7 @@ def generate_nwc_query(state: Dict[str, Any]):
     # Create chain
     # We pass nwc_config as a partial variable or input
     # k controls the limit. Increasing to 1000 to return more history.
-    sql_chain = create_sql_query_chain(llm, db, prompt=prompt, k=1000)
+    sql_chain = create_sql_chain(prompt, k=1000)
     
     try:
         app_logger.info(f"generate_nwc_query: generating SQL for '{question}'")
