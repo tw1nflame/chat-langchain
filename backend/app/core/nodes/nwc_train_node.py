@@ -9,6 +9,19 @@ from core.nodes.shared_resources import llm
 
 # Node: Call NWC Train Service
 def call_nwc_train(state: dict):
+    """Upload training data and request forecast training/prediction from the external NWC service.
+
+    Description for planner/LLM summary:
+    - Purpose: using an uploaded file and extracted parameters (pipeline, items, date), call the external NWC
+      training API to start a training/prediction task.
+    - Inputs:
+      - state["files"]: list of uploaded files (expects an Excel file).
+      - state["auth_token"]: bearer token to call NWC service.
+      - state["question"] and state["chat_history"]: used to extract pipeline/items/date via LLM.
+    - Outputs: {"result": <message>} — success or error text including task_id or API error details.
+    - Side effects: uploads file to an external service to start a long-running task. May return 409 if a task is already running.
+    - Notes for plan confirmation: Make it clear that this step will use the uploaded file and will start a remote job (asynchronous). The UI should present task id and possible warnings to the user.
+    """
     question = state["question"]
     auth_token = state.get("auth_token")
     files = state.get("files", [])

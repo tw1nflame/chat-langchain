@@ -15,7 +15,32 @@ planner_prompt = PromptTemplate.from_template(planner_template)
 
 # Node: Planner
 def planner(state: dict):
+    """Plan a sequence of high-level actions to satisfy the user's question.
+
+    Description for planner/LLM summary:
+    - Purpose: analyze the user's `question`, `files`, and `chat_history` and return an ordered `plan` (list of
+      action dicts) describing which nodes to run and in which order.
+    - Outputs: {"plan": [...], "current_step": 0}
+      - Each plan step is a dict with at least the key `action` (e.g., "GENERATE_SQL", "EXECUTE_SQL", "SUMMARIZE").
+    - Side effects: none (planner only suggests actions; it does not perform them).
+    - Notes for plan confirmation: The planner's output will be used to generate a human-readable description of the intended actions
+      by collecting docstrings from each referenced node and asking the LLM to summarize "what will happen" before execution.
+    """
     app_logger.info("Planner: generating plan")
+    try:
+        app_logger.debug("planner_called", extra={
+            "question": state.get("question", "" )[:200],
+            "history_len": len(state.get("chat_history", [])),
+            "files_count": len(state.get("files", []) or []),
+        })
+    except Exception:
+        app_logger.debug("planner_called_snapshot_failed")
+
+    # If a plan already exists in state (persisted by controller), skip re-planning.
+    if state.get("plan"):
+        existing = state.get("plan")
+        app_logger.info("Planner: existing plan found in state, skipping re-planning", extra={"plan_len": len(existing), "current_step": state.get("current_step", 0)})
+        return {"plan": state.get("plan"), "current_step": state.get("current_step", 0)}
 
     # Include history in context if available (simple concatenation for now)
     history = state.get("chat_history", [])

@@ -318,6 +318,24 @@ async def get_messages(chat_id: str, request: Request, db: Session = Depends(get
                 sm['tables'] = []
             serialized.append(sm)
         try:
+            # If there's a pending confirmation in the graph state, surface it on the last assistant message
+            try:
+                from core.agent_graph import graph
+                config = {"configurable": {"thread_id": chat_id}}
+                current_state = graph.get_state(config)
+                if current_state and getattr(current_state, 'values', None):
+                    vals = current_state.values
+                    if vals.get('awaiting_confirmation') and vals.get('plan_id'):
+                        # Find last assistant message in the serialized list and annotate it
+                        for sm in reversed(serialized):
+                            if sm.get('role') == 'assistant':
+                                sm['awaiting_confirmation'] = True
+                                sm['plan_id'] = vals.get('plan_id')
+                                sm['confirmation_summary'] = vals.get('confirmation_summary')
+                                break
+            except Exception:
+                app_logger.debug("get_messages_state_annotation_failed", extra={"chat_id": chat_id})
+
             # Log count and a small preview to help debug frontend issues
             app_logger.info(
                 "get_messages_fetched",
@@ -508,7 +526,7 @@ async def send_message_and_get_response(
     try:
         auth_token = hdrs.get("authorization", "").replace("Bearer ", "")
         # Use api_files as they are the ones uploaded by the user here
-        assistant_content, assistant_files, tables, charts = await generate_assistant_response(content, api_files, chat_id, owner_id, auth_token=auth_token)
+        assistant_content, assistant_files, tables, charts, awaiting_confirmation, confirmation_summary, plan_id = await generate_assistant_response(content, api_files, chat_id, owner_id, auth_token=auth_token)
     except Exception as e:
         app_logger.exception("assistant_generation_failed")
         raise HTTPException(status_code=500, detail=f"Assistant generation failed: {str(e)}")
@@ -520,17 +538,31 @@ async def send_message_and_get_response(
         if not chat_still_exists:
             raise HTTPException(status_code=404, detail="Chat was deleted")
 
-        db_assistant_message = Message(
-            id=str(uuid.uuid4()),
-            chat_id=chat_id,
-            role="assistant",
-            content=assistant_content,
-        )
-        db.add(db_assistant_message)
-        db.commit()
-        db.refresh(db_assistant_message)
+        # Avoid inserting a duplicate assistant message if the last assistant message content
+        # for this chat matches the new content (can happen when confirmation summary was generated twice)
+        last_asst = db.query(Message).filter(Message.chat_id == chat_id, Message.role == 'assistant').order_by(Message.created_at.desc()).first()
+        if last_asst and getattr(last_asst, 'content', None) == assistant_content:
+            app_logger.info("assistant_message_persist: duplicate assistant content detected, reusing last message")
+            db_assistant_message = last_asst
+        else:
+            db_assistant_message = Message(
+                id=str(uuid.uuid4()),
+                chat_id=chat_id,
+                role="assistant",
+                content=assistant_content,
+            )
+            db.add(db_assistant_message)
+            db.commit()
+            db.refresh(db_assistant_message)
 
-        # Save Tables to Parquet
+            # Log when a confirmation message is issued so we can trace plan_id and chat state
+            try:
+                if awaiting_confirmation:
+                    app_logger.info("assistant_message_created_awaiting_confirmation", extra={"chat_id": chat_id, "message_id": str(db_assistant_message.id), "plan_id": plan_id})
+            except Exception:
+                app_logger.debug("assistant_message_confirm_log_failed", extra={"chat_id": chat_id})
+
+        # Save Tables to Parquet (only if we just created a new assistant message or there are new tables)
         enriched_tables = []
         if tables and isinstance(tables, list):
             try:
@@ -538,9 +570,12 @@ async def send_message_and_get_response(
                     rows = table_data.get("rows", [])
                     headers = table_data.get("headers", [])
                     if rows:
-                        save_table_parquet(rows, headers, str(db_assistant_message.id), idx)
-                        app_logger.info("table_parquet_saved", extra={"msg_id": db_assistant_message.id, "index": idx})
-                        
+                        # Only save if the table file does not exist yet for this message/index (best-effort check)
+                        try:
+                            save_table_parquet(rows, headers, str(db_assistant_message.id), idx)
+                            app_logger.info("table_parquet_saved", extra={"msg_id": db_assistant_message.id, "index": idx})
+                        except Exception as ex:
+                            app_logger.warning(f"table_parquet_save_skipped_or_failed: {ex}")
                         # Enrich for response
                         t_copy = table_data.copy()
                         t_copy['download_url'] = f"/api/v1/download/table/{db_assistant_message.id}/{idx}/export.xlsx"
@@ -632,7 +667,10 @@ async def send_message_and_get_response(
         files=assistant_files,
         tables=enriched_tables,
         charts=enriched_charts,
-        created_at=db_assistant_message.created_at
+        created_at=db_assistant_message.created_at,
+        awaiting_confirmation=awaiting_confirmation,
+        confirmation_summary=confirmation_summary,
+        plan_id=plan_id
     )
     
     return ChatExchangeResponse(
@@ -763,7 +801,7 @@ async def temporary_chat_message(
         # Determine effective owner_id for this session
         # We use the authenticated user's ID
         
-        assistant_content, assistant_files, tables, charts = await generate_assistant_response(
+        assistant_content, assistant_files, tables, charts, awaiting_confirmation, confirmation_summary, plan_id = await generate_assistant_response(
             content, 
             api_files, 
             temp_chat_id, 
@@ -812,7 +850,10 @@ async def temporary_chat_message(
             files=assistant_files,
             tables=enriched_tables,
             charts=enriched_charts,
-            created_at=datetime.utcnow()
+            created_at=datetime.utcnow(),
+            awaiting_confirmation=awaiting_confirmation,
+            confirmation_summary=confirmation_summary,
+            plan_id=plan_id
         )
         
         return ChatExchangeResponse(

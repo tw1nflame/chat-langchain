@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from api.chat import router as chat_router
+from api.confirm import router as confirm_router
 from core.config import settings
 from core.logging_config import app_logger
 from core.database import engine, Base
@@ -36,7 +37,7 @@ if os.path.exists(static_dir):
 
 # Роуты
 app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
-
+app.include_router(confirm_router, prefix="/api/v1", tags=["confirm"])
 
 @app.on_event("startup")
 def startup_create_tables():

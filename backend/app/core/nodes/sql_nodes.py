@@ -17,6 +17,20 @@ sql_chain = create_sql_chain(prompt, k=50)
 
 # Node: Generate Query
 def generate_query(state: dict):
+    """Generate SQL for the user's question.
+
+    Description for planner/LLM summary:
+    - Purpose: analyze the user's natural language `question` (and recent `chat_history`) and generate
+      a precise SQL query that will be executed against the agent database.
+    - Inputs:
+      - state["question"] (string): the user's request in natural language.
+      - state["chat_history"] (list[string], optional): recent conversation context to help disambiguate the request.
+    - Outputs:
+      - returns {"query": <sql_string>} on success.
+      - returns {"query": "ERROR", "result": <error message>} on generation failure.
+    - Side effects: none (only generates SQL, does not execute it).
+    - Notes for plan confirmation: The description should explicitly state that the system will run a SQL generation step which produces a SQL string; the next step could be executing that SQL against the database and returning tabular results.
+    """
     question = state["question"]
     history = state.get("chat_history", [])
     history_str = json.dumps(history[-5:], ensure_ascii=False) if history else "[]"
@@ -50,6 +64,20 @@ def generate_query(state: dict):
 
 # Node: Execute and Format
 def execute_and_format(state: dict):
+    """Выполняет SQL-запрос против базы данных и возвращает реальные данные, пригодные для построения графиков и подготовки краткого итогового отчёта.
+
+    Description for planner/LLM summary:
+    - Purpose: take a SQL `query` produced by `generate_query` (or NWC nodes), execute it against the
+      configured database, and return structured table data and/or a short human-readable message.
+    - Inputs:
+      - state["query"] (string): SQL statement to execute. Special value: "NO_SQL" means skip execution.
+    - Outputs:
+      - On success: {"result": <message>, "tables": [ {"headers": [...], "rows": [[...]], "title": ... } ] }
+      - If no rows: {"result": "Запрос выполнен успешно, но данных не найдено.", "tables": []}
+      - On SQL error: {"result": "Ошибка выполнения запроса: <error>\n\nQuery: `<query>`"}
+    - Side effects: reads from the database; no persistent writes.
+    - Notes for plan confirmation: Should describe that actual data will be retrieved and that large-result warnings or empty results are possible. For analytical flows, this node is expected to execute queries that retrieve the LAST 12 MONTHS of data (or the window chosen by the planner) and return results formatted for chart generation and concise summarization.
+    """
     query = state.get("query")
     if not query or query == "ERROR":
         return {"result": state.get("result", "Invalid query generation")}

@@ -13,6 +13,18 @@ summary_prompt = PromptTemplate.from_template(summary_template)
 
 # Node: Generate Visualization Config
 def generate_viz(state: dict):
+    """Генерирует спецификацию графиков (временные ряды за последний год) для визуализации трендов и аномалий, пригодную для итогового отчёта.
+
+    Description for planner/LLM summary:
+    - Purpose: inspect the first result table (`state["tables"][0]`) and the user's `question`, and produce
+      a JSON chart specification (or `NO_CHART` signal) suitable for frontend rendering.
+    - Inputs:
+      - state["tables"]: list of tables with headers and rows.
+      - state["question"]: original user query to infer chart intent.
+    - Outputs: {"charts": [ {"title": ..., "spec": <chart-spec-json> } ] } or {"charts": []} when no chart is applicable.
+    - Side effects: none.
+    - Notes for plan confirmation: Emphasize that this step creates a visualization spec (not the image) and that frontend will render the chart from the spec. For analytical requests, prefer TIME-SERIES charts covering the LAST 12 MONTHS (or the window provided by the planner), highlight trends and anomalies, and ensure the chart is suitable for use in the concise final report.
+    """
     app_logger.info("generate_viz: processing")
     tables = state.get("tables", [])
     if not tables:
@@ -70,6 +82,20 @@ def generate_viz(state: dict):
 
 # Node: Generate Summary
 def generate_summary(state: dict):
+    """Формирует краткий итоговый отчёт с ключевыми выводами (1-2 предложения) на основе данных и графиков.
+
+    Description for planner/LLM summary:
+    - Purpose: given the executed SQL, returned tables, charts, and optional RAG/NWC context, produce
+      a concise and helpful natural-language summary for the user.
+    - Inputs:
+      - state["question"]: original user question
+      - state["query"]: SQL executed (if any)
+      - state["tables"] and state["charts"]: data produced by previous steps
+      - state["nwc_info"], state["rag_context"]: optional contextual info
+    - Outputs: {"result": <summary string>} — the natural-language answer to present to the user.
+    - Side effects: none.
+    - Notes for plan confirmation: the summary explicitly refers to what was executed (query/chart generation/training) and any limitations or missing context. For analytical requests, produce a very concise final report (1-2 sentences) that highlights key conclusions and, if appropriate, a short recommendation; avoid long per-article enumerations and instead rely on the accompanying table and charts for details.
+    """
     question = state["question"]
     query = state.get("query", "")
     tables = state.get("tables", [])

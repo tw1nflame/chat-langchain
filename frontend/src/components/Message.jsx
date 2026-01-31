@@ -57,8 +57,29 @@ const VegaChart = ({ spec, title, data }) => {
   )
 }
 
-function Message({ message }) {
+import { useState } from "react"
+
+function Message({ message, chatId, onConfirm }) {
   const isUser = message.role === "user"
+  const [confirmLoading, setConfirmLoading] = useState(false)
+  const [confirmedClicked, setConfirmedClicked] = useState(false)
+
+  const handleConfirm = async (confirm) => {
+    if (!onConfirm) return
+    // Mark as clicked immediately so Cancel becomes unavailable instantly
+    if (confirm) setConfirmedClicked(true)
+    setConfirmLoading(true)
+    try {
+      await onConfirm(message.id, confirm)
+    } catch (e) {
+      console.error('Confirm plan failed', e)
+      alert('Ошибка подтверждения плана: ' + (e.message || e))
+      // Re-enable cancel if request failed
+      if (confirm) setConfirmedClicked(false)
+    } finally {
+      setConfirmLoading(false)
+    }
+  }
 
   // Функция для получения иконки файла по типу
   const getFileIcon = (fileName, fileType) => {
@@ -107,9 +128,14 @@ function Message({ message }) {
         {isUser ? (
           <p className="text-white text-right whitespace-pre-wrap">{message.content}</p>
         ) : (
-          <div className="prose max-w-none text-gray-800">
-            <Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
-          </div>
+          // If awaiting confirmation, hide the duplicate assistant content and show only the confirmation UI below
+          message.awaiting_confirmation ? (
+            <></>
+          ) : (
+            <div className="prose max-w-none text-gray-800">
+              <Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
+            </div>
+          )
         )}
 
         {/* Прикрепленные файлы */}
@@ -252,6 +278,29 @@ function Message({ message }) {
                     />
                 ))}
             </div>
+        )}
+
+        {/* Confirmation UI when awaiting user approval */}
+        {message.awaiting_confirmation && (
+          <div className="mt-4 p-3 rounded border border-yellow-300 bg-yellow-50">
+            <div className="text-sm text-yellow-800 mb-3 whitespace-pre-wrap">{message.confirmation_summary}</div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleConfirm(true)}
+                disabled={confirmLoading}
+                className="bg-green-500 hover:bg-green-600 text-white py-1 px-3 rounded text-sm"
+              >
+                {confirmLoading ? 'Выполняется...' : 'Продолжить'}
+              </button>
+              <button
+                onClick={() => handleConfirm(false)}
+                disabled={confirmLoading || confirmedClicked}
+                className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 py-1 px-3 rounded text-sm"
+              >
+                Отменить
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Время отправки */}

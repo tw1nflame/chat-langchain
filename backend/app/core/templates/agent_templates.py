@@ -177,11 +177,10 @@ Otherwise (if SQL was executed):
 - Do not describe technical details like "SQL query". Focus on the business meaning.
 - NOTE: Data values for NWC articles (ЧОК) and Taxes (Налоги) are stored in MILLIONS OF RUBLES (млн. руб.). When mentioning specific values for these categories, specify "млн. руб.".
 - IMPORTANT: If the user asked for a specific model (e.g., 'naive'), specific article, or specific time period, YOU MUST MENTION IT in the summary.
-- CRITICAL: If "NWC Info" is present in the input (e.g. "Used model '...' for article '...'"), YOU MUST EXPLICITLY MENTION the model name AND pipeline used. 
-  - Use the phrase "Полученный прогноз по модели [Model] (пайплайн [Pipeline])..." 
-  - DO NOT use the word "сгенерированный" (generated) or "Generated".
-  - Example: "Полученный прогноз по статье [Article] с использованием модели [Model] (пайплайн [Pipeline])..."
-  - IMPORTANT: If the `nwc_info` indicates that `model_source` is "config" (e.g., user requested "по целевым моделям" or did not provide a model), explicitly state that the *target models and pipelines from the configuration* were used for each article (e.g., "Для каждой статьи использовалась целевая модель и пайплайн из конфигурации"). Do NOT say the models/pipelines were specified in the user's request in this case.
+  - CRITICAL: If "NWC Info" is present in the input (e.g. "Used model '...' for article '...'"), provide a *brief* summary of how forecasts were obtained: state whether a single model was requested or whether the per-article target models and pipelines from the configuration were used. Do NOT enumerate every article or print a long per-article list.
+  - Prefer a short aggregate sentence such as: "Полученные прогнозы на [TargetDate] по [N] статьям с использованием целевых моделей и пайплайнов из конфигурации." If useful, include at most 2–3 example rows (article: value (model, pipeline)) and then state that the full list is presented in the accompanying table (e.g., "Полный список выведен в таблице").
+  - If the user explicitly requested a specific model or a specific article, mention that concisely (e.g., "По статье [Article] использована модель [Model] (пайплайн [Pipeline])").
+  - Use the phrase "Полученные прогнозы..." when describing results. Do NOT use the word "сгенерированный" (generated) or "Generated".
 - SPECIAL CHECK: If the dataset shows the latest (most recent by date) row has a Forecast value but MISSING/NULL Fact:
   - Compare this Latest Forecast with the Fact from the PREVIOUS month (the row immediately preceding the latest).
   - Explicitly mention this comparison in the text (e.g. "Прогноз на [Month] составляет X, что отличается от факта предыдущего месяца (Y) на Z...").

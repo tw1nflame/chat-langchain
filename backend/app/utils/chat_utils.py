@@ -73,20 +73,30 @@ async def generate_assistant_response(user_message: str, user_files: List[Dict[s
                 response_text = agent_result.get("content", "")
                 tables = agent_result.get("tables", [])
                 charts = agent_result.get("charts", [])
+                awaiting_confirmation = agent_result.get("awaiting_confirmation", False)
+                confirmation_summary = agent_result.get("confirmation_summary")
+                plan_id = agent_result.get("plan_id")
             else:
                 # Fallback for old str return
                 response_text = str(agent_result)
                 tables = []
                 charts = []
-            
-            app_logger.info(f"Agent response received. Length: {len(response_text)}")
-            return response_text, [], tables, charts
+                awaiting_confirmation = False
+                confirmation_summary = None
+                plan_id = None
+
+            # If confirmation is pending, prefer to show the generated confirmation summary to the user
+            if awaiting_confirmation and confirmation_summary:
+                response_text = confirmation_summary
+
+            app_logger.info("Agent response received", extra={"len": len(response_text), "awaiting_confirmation": awaiting_confirmation, "plan_id": plan_id})
+            return response_text, [], tables, charts, awaiting_confirmation, confirmation_summary, plan_id
         except Exception as e:
             app_logger.error(f"Error generating response with agent: {e}", exc_info=True)
-            return f"Error: {e}", [], [], []
+            return f"Error: {e}", [], [], [], False, None, None
     else:
         app_logger.warning("DeepSeek API Key NOT configured. Using echo stub.")
-        return f"DeepSeek API Key not configured. Echo: {user_message}", [], [], []
+        return f"DeepSeek API Key not configured. Echo: {user_message}", [], [], [], False, None, None
 
 
 def get_storage_base_path() -> str:

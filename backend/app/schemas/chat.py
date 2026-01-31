@@ -58,6 +58,12 @@ class MessageResponse(BaseModel):
     charts: Optional[List[ChartData]] = []
     created_at: datetime
     owner_id: Optional[str] = None
+
+    # Optional fields used for plan confirmation flow
+    awaiting_confirmation: Optional[bool] = False
+    confirmation_summary: Optional[str] = None
+    # Plan identifier for pending confirmations (frontend should pass back this id when confirming)
+    plan_id: Optional[str] = None
     
     class Config:
         from_attributes = True

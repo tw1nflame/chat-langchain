@@ -17,8 +17,18 @@ def load_docx(file_path: str) -> str:
     return result.text_content
 
 def update_rag_node(state: Dict[str, Any]):
-    """
-    Node to process attached Word files and update the Qdrant vector store.
+    """Process attached Word files and update the knowledge vector store (Qdrant).
+
+    Description for planner/LLM summary:
+    - Purpose: read attached Word (.docx/.doc) files from `state["files"]`, extract text, chunk it,
+      and upload document vectors into the project's vector store for future retrieval.
+    - Inputs:
+      - state["files"]: list of file metadata (must include `path`, `name`).
+      - state["owner_id"]: used for metadata tagging of inserted documents.
+    - Outputs:
+      - {"result": <message>} describing how many documents were added and any processing errors.
+    - Side effects: writes new embeddings/documents into the vector store (persistent external effect).
+    - Notes for plan confirmation: explicitly warn user that files will be uploaded and used to update the knowledge base; this is a persistent action and may be irreversible.
     """
     app_logger.info("update_rag_node: processing")
 
@@ -109,8 +119,18 @@ def update_rag_node(state: Dict[str, Any]):
 
 
 def retrieve_rag_node(state: Dict[str, Any]):
-    """
-    Node to retrieve context from the Qdrant vector store based on the question.
+    """Retrieve relevant knowledge base context for the user's question from the vector store.
+
+    Description for planner/LLM summary:
+    - Purpose: given `state["question"]`, perform a similarity search in the vector store and return
+      a concatenated context string (top-k documents) suitable to include in downstream LLM prompts.
+    - Inputs:
+      - state["question"]: natural language query to search the KB for.
+    - Outputs:
+      - {"rag_context": <string>} containing formatted snippets from the most relevant documents or
+        an explanatory message when nothing is found.
+    - Side effects: none (read-only retrieval).
+    - Notes for plan confirmation: the summary should state that this step will fetch contextual documents to reduce hallucinations and inform the final answer.
     """
     app_logger.info("retrieve_rag_node: processing")
     

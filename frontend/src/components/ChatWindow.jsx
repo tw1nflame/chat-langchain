@@ -3,7 +3,7 @@
 import { useState } from "react"
 import MessageList from "./MessageList"
 import ChatInput from "./ChatInput"
-import { sendMessage, createChat } from "../api/chat"
+import { sendMessage, createChat, confirmPlan } from "../api/chat"
 
 // Генерация UUID v4
 function generateUUID() {
@@ -95,6 +95,9 @@ function ChatWindow({ chat, onUpdateMessages }) {
         tables: response.assistantMessage.tables || [],
         charts: response.assistantMessage.charts || [],
         timestamp: new Date(response.assistantMessage.created_at),
+        awaiting_confirmation: response.assistantMessage.awaiting_confirmation || false,
+        confirmation_summary: response.assistantMessage.confirmation_summary || null,
+        plan_id: response.assistantMessage.plan_id || null,
       }
 
       // Добавляем сообщение ассистента к уже существующим сообщениям
@@ -156,10 +159,58 @@ function ChatWindow({ chat, onUpdateMessages }) {
     )
   }
 
+  // Confirm plan handler
+  const handleConfirmPlan = async (messageId, confirm) => {
+    // Must have a persisted server id for confirmation
+    const serverId = chat.server_id
+    if (!serverId) {
+      alert('Нельзя подтвердить план: чат не сохранён на сервере yet.')
+      return
+    }
+
+    // Find message and extract planId
+    const msg = chat.messages.find(m => m.id === messageId)
+    const planId = msg?.plan_id || null
+    if (!planId) {
+      alert('Невозможно подтвердить: отсутствует plan_id для сообщения. Попробуйте обновить страницу.')
+      return
+    }
+
+    try {
+      const resp = await confirmPlan(serverId, confirm, planId)
+
+      // Update the assistant message in UI
+      const updated = chat.messages.map((m) => {
+        if (m.id !== messageId) return m
+        // Copy and update
+        const nm = { ...m }
+        if (confirm) {
+          nm.content = resp.content || nm.content
+          nm.tables = resp.tables || nm.tables || []
+          nm.charts = resp.charts || nm.charts || []
+          nm.awaiting_confirmation = false
+          nm.confirmation_summary = null
+          nm.plan_id = null
+        } else {
+          nm.content = resp.result || 'План отменён.'
+          nm.awaiting_confirmation = false
+          nm.confirmation_summary = null
+          nm.plan_id = null
+        }
+        return nm
+      })
+
+      onUpdateMessages(chat.id, updated)
+    } catch (e) {
+      console.error('Confirm plan failed', e)
+      alert('Ошибка при подтверждении плана: ' + (e.message || e))
+    }
+  }
+
   // Чат с сообщениями - обычная компоновка
   return (
     <div className="flex-1 flex flex-col">
-      <MessageList messages={chat.messages} />
+      <MessageList messages={chat.messages} chatId={chat.id} onConfirm={handleConfirmPlan} />
       <ChatInput
         onSendMessage={handleSendMessage}
         centered={false}

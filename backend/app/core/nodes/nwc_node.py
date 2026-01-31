@@ -121,8 +121,20 @@ def fetch_nwc_config(auth_token: str) -> Dict[str, Any]:
         return {}
 
 def generate_nwc_query(state: Dict[str, Any]):
-    """
-    Node to generate SQL for NWC requests using external config.
+    """Generate a SQL query for NWC requests using external NWC configuration.
+
+    Description for planner/LLM summary:
+    - Purpose: analyze the user's `question` together with the NWC configuration (fetched from external
+      service using `auth_token`) and generate a syntactically correct SQL query against the `results_data` table.
+    - Inputs:
+      - state["question"]: natural language request about NWC forecasts.
+      - state["auth_token"]: optional token used to fetch the NWC config.
+      - state["chat_history"]: optional recent context to disambiguate the request.
+    - Outputs:
+      - On success: {"query": <sql_string>, "nwc_info": {...}} where `nwc_info` contains config/article/model/pipeline metadata used to build SQL.
+      - On failure: {"query": "ERROR", "result": <error message>}.
+    - Side effects: none (only reads external config and synthesizes a query).
+    - Notes for plan confirmation: emphasize that this step will only *generate* SQL (not execute it); if executed later it will retrieve real data.
     """
     question = state.get("question", "")
     auth_token = state.get("auth_token")
@@ -212,12 +224,14 @@ def generate_nwc_query(state: Dict[str, Any]):
 
 def nwc_analyze(state: Dict[str, Any]):
     """
-    Node to analyze the forecast for a single article.
+    Извлекает факты и прогнозные данные за последний год по целевой модели для указанной статьи и вычисляет абсолютные и относительные отклонения. Если не укзан месяц, то берёт последний доступный месяц, если указан - то данные за год до указанного месяца.
+
     Behavior:
       - Use LLM to extract: article name (MUST be one of configured articles), optional model, optional date.
       - If model is missing, use the target model from config for the article.
       - If date is missing, fetch the latest forecast date from DB for that article/pipeline/model and use it.
-      - Return SQL retrieving the last 13 rows (<= target_date) ordered by date DESC, including abs/rel deviations.
+      - For analytical requests, generate SQL that retrieves real historical forecasts and facts for the LAST 12 MONTHS (up to the target date) for the target model/pipeline; this window is preferred for time-series charts and concise summary conclusions.
+      - Otherwise, return SQL retrieving the latest 13 rows (<= target_date) ordered by date DESC, including abs/rel deviations.
     """
     question = state.get("question", "")
     auth_token = state.get("auth_token")
@@ -349,12 +363,14 @@ LIMIT 13;"""
 
 def nwc_show_forecast(state: Dict[str, Any]):
     """
-    Node to show forecast for multiple articles (or all).
+    Формирует SQL-запрос для извлечения реальных прогнозов за последний год по целевым моделям для выбранных статей (не выполняет SQL).
+
     Behavior:
       - Use LLM to extract: list of articles (array) or 'ALL', optional model (applies to all), optional pipeline, optional date.
       - If model is provided in prompt: use it for ALL articles; pipeline defaults to 'base' if not provided.
-      - If model is NOT provided: use per-article target model and pipeline from config.
+      - If model is NOT provided: use per-article target model and pipeline from config (this selection will be reflected in the confirmation and query construction).
       - If date not provided: find the latest available date across the selected article/model/pipeline combinations and use it.
+      - For analysis plans, the generated SQL should cover the LAST 12 MONTHS (up to the chosen date) per article/model to support time-series visualizations and concise summarization.
       - Return SQL selecting rows for the selected articles on the chosen date, with a CASE for forecast_value when different models are used.
       - Do NOT generate visualizations.
     """

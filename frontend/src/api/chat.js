@@ -115,6 +115,29 @@ export const sendMessage = async (chatId, content, files = []) => {
   }
 }
 
+// Confirm or cancel a pending plan for a chat
+export const confirmPlan = async (chatId, confirm = true, planId = null) => {
+  const authHeaders = await getAuthHeaders()
+  const url = `${API_BASE}/api/v1/chats/${chatId}/confirm_plan?confirm=${confirm ? 'true' : 'false'}${planId ? `&plan_id=${encodeURIComponent(planId)}` : ''}`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: authHeaders,
+  })
+
+  let bodyText = null
+  try { bodyText = await response.text() } catch (e) {}
+
+  if (!response.ok) {
+    throw new Error(`Confirm plan failed: ${response.status} ${bodyText || ''}`)
+  }
+
+  try {
+    return JSON.parse(bodyText || '{}')
+  } catch (e) {
+    return {}
+  }
+}
+
 // Получить все сообщения чата
 export const getChatMessages = async (chatId) => {
   const authHeaders = await getAuthHeaders()
