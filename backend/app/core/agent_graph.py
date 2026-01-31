@@ -167,19 +167,31 @@ def run_agent(query: str, owner_id: str, auth_token: str = None, files: List[dic
 
     try:
         # Prepare inputs
+        # IMPORTANT: reset transient control flags so they do NOT persist from previous runs
         inputs = {
             "question": query,
             "owner_id": owner_id,
             "auth_token": auth_token,
-            # Reset temporary execution state
+
+            # Reset execution state
             "current_step": 0,
             "plan": [],
             "query": None,
             "result": None,
             "tables": [],
-            "charts": []
+            "charts": [],
+
+            # --- TRANSIENT CONTROL FLAGS: ensure no stale values carry over ---
+            "resuming": False,
+            "awaiting_confirmation": False,
+            "pause_after_planner": False,
+            "confirm_in_progress": False,
+            "plan_id": None,
+            "confirmation_summary": None,
+            "plan_confirmed": False,
+            # --------------------------------------------------------------
         }
-        
+
         if files:
             inputs["files"] = files
             

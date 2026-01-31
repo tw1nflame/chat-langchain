@@ -63,19 +63,23 @@ function Message({ message, chatId, onConfirm }) {
   const isUser = message.role === "user"
   const [confirmLoading, setConfirmLoading] = useState(false)
   const [confirmedClicked, setConfirmedClicked] = useState(false)
+  const [cancelledClicked, setCancelledClicked] = useState(false)
 
   const handleConfirm = async (confirm) => {
     if (!onConfirm) return
-    // Mark as clicked immediately so Cancel becomes unavailable instantly
+    // Mark as clicked immediately so the corresponding button becomes unavailable instantly
     if (confirm) setConfirmedClicked(true)
+    else setCancelledClicked(true)
+
     setConfirmLoading(true)
     try {
       await onConfirm(message.id, confirm)
     } catch (e) {
       console.error('Confirm plan failed', e)
       alert('Ошибка подтверждения плана: ' + (e.message || e))
-      // Re-enable cancel if request failed
+      // Re-enable the relevant button if request failed
       if (confirm) setConfirmedClicked(false)
+      else setCancelledClicked(false)
     } finally {
       setConfirmLoading(false)
     }
@@ -294,10 +298,10 @@ function Message({ message, chatId, onConfirm }) {
               </button>
               <button
                 onClick={() => handleConfirm(false)}
-                disabled={confirmLoading || confirmedClicked}
+                disabled={confirmLoading || confirmedClicked || cancelledClicked}
                 className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 py-1 px-3 rounded text-sm"
               >
-                Отменить
+                {cancelledClicked ? 'Отменяется...' : 'Отменить'}
               </button>
             </div>
           </div>

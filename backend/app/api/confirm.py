@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from core.agent_graph import graph
 from .deps import get_current_owner
 from core.database import get_db
-from models.chat import Chat
+from models.chat import Chat, Message
 from core.logging_config import app_logger
 from typing import Optional
 import uuid
@@ -79,14 +79,62 @@ async def confirm_plan(chat_id: str, confirm: bool = True, plan_id: Optional[str
                 raise HTTPException(status_code=400, detail="No confirmation is pending for this thread")
 
         if not confirm:
-            # If another confirm is in progress, do not allow cancel
-            if values.get('confirm_in_progress'):
-                app_logger.warning(f"confirm_plan_cancel_denied_in_progress chat_id={chat_id}")
-                raise HTTPException(status_code=409, detail="Cannot cancel: confirmation is in progress")
+            cancel_message = "Выполнение плана было отменено пользователем."
 
-            # Cancel the plan (clear paused state and plan)
-            final = graph.invoke({"plan": [], "current_step": 0, "awaiting_confirmation": False, "pause_after_planner": False, "plan_id": None, "result": "Plan cancelled by user."}, config=config)
-            return {"detail": "Plan cancelled.", "result": final.get("result", "")}
+            # 1) Update graph state SILENTLY without invoking the planner/executor
+            try:
+                graph.update_state(
+                    config,
+                    {
+                        "plan": [],
+                        "current_step": 0,
+                        "awaiting_confirmation": False,
+                        "pause_after_planner": False,
+                        "plan_id": None,
+                        "result": cancel_message,
+                        "resuming": False,
+                        "confirm_in_progress": False,
+                    },
+                )
+                app_logger.info(f"confirm_plan: state_cleared_for_cancel chat_id={chat_id} plan_id={plan_id}")
+            except Exception as e:
+                app_logger.error(f"confirm_plan: failed to update state for cancel: {e}")
+
+            # 2) Update assistant messages in DB that contain the confirmation summary text (or fallback to last assistant message)
+            try:
+                confirmation_summary = values.get('confirmation_summary')
+                updated_msg_ids = []
+                if confirmation_summary:
+                    matching_msgs = db.query(Message).filter(
+                        Message.chat_id == chat_id,
+                        Message.role == 'assistant',
+                        Message.content.ilike(f"%{confirmation_summary.strip()}%")
+                    ).all()
+
+                    for msg in matching_msgs:
+                        msg.content = cancel_message
+                        db.add(msg)
+                        updated_msg_ids.append(str(msg.id))
+
+                # Fallback: if no matching messages found, update the last assistant message
+                if not updated_msg_ids:
+                    last_asst_msg = db.query(Message).filter(
+                        Message.chat_id == chat_id,
+                        Message.role == 'assistant'
+                    ).order_by(Message.created_at.desc()).first()
+
+                    if last_asst_msg:
+                        last_asst_msg.content = cancel_message
+                        db.add(last_asst_msg)
+                        updated_msg_ids.append(str(last_asst_msg.id))
+
+                if updated_msg_ids:
+                    db.commit()
+                    app_logger.info(f"confirm_plan_cancelled_db_updated chat_id={chat_id} updated_msg_ids={updated_msg_ids}")
+            except Exception as e:
+                app_logger.error(f"confirm_plan_cancel_db_fail: {e}")
+
+            return {"detail": "Plan cancelled.", "result": cancel_message}
 
         # Confirm: protect against concurrent cancels by marking confirm_in_progress True first
         try:
@@ -100,7 +148,7 @@ async def confirm_plan(chat_id: str, confirm: bool = True, plan_id: Optional[str
 
         # Persist final assistant message (update previous assistant confirmation message if present)
         try:
-            from models.chat import Message, Chart
+            from models.chat import Chart
             from utils.storage_utils import save_table_parquet
 
             confirmation_summary = values.get('confirmation_summary')
