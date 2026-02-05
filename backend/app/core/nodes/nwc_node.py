@@ -363,14 +363,14 @@ LIMIT 13;"""
 
 def nwc_show_forecast(state: Dict[str, Any]):
     """
-    Формирует SQL-запрос для извлечения реальных прогнозов за последний год по целевым моделям для выбранных статей (не выполняет SQL).
+    Формирует SQL-запрос для извлечения реальных прогнозов для целевого периода по целевым моделям для выбранных статей (не выполняет SQL).
 
     Behavior:
       - Use LLM to extract: list of articles (array) or 'ALL', optional model (applies to all), optional pipeline, optional date.
       - If model is provided in prompt: use it for ALL articles; pipeline defaults to 'base' if not provided.
       - If model is NOT provided: use per-article target model and pipeline from config (this selection will be reflected in the confirmation and query construction).
       - If date not provided: find the latest available date across the selected article/model/pipeline combinations and use it.
-      - For analysis plans, the generated SQL should cover the LAST 12 MONTHS (up to the chosen date) per article/model to support time-series visualizations and concise summarization.
+      - Generated SQL will cover the target month AND the preceding 12 months (13 points total) to support trend analysis and charts.
       - Return SQL selecting rows for the selected articles on the chosen date, with a CASE for forecast_value when different models are used.
       - Do NOT generate visualizations.
     """

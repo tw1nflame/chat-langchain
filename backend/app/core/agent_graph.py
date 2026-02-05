@@ -56,7 +56,13 @@ def executor(state: GraphState):
         return {"next_action": "end"}
         
     step = plan[current_step]
-    action = step.get("action")
+    
+    # Handle both dict steps {"action": "NAME"} and string steps "NAME"
+    if isinstance(step, dict):
+        action = step.get("action")
+    else:
+        # Assuming step is a string action name if it's not a dict
+        action = str(step)
     
     app_logger.info(f"Executor step {current_step}: {action}")
     return {"next_action": action}
@@ -180,6 +186,8 @@ def run_agent(query: str, owner_id: str, auth_token: str = None, files: List[dic
             "result": None,
             "tables": [],
             "charts": [],
+            "nwc_info": None, # Clean prior execution info
+            "rag_context": None, # Clean prior rag context
 
             # --- TRANSIENT CONTROL FLAGS: ensure no stale values carry over ---
             "resuming": False,
@@ -192,11 +200,23 @@ def run_agent(query: str, owner_id: str, auth_token: str = None, files: List[dic
             # --------------------------------------------------------------
         }
 
+        # Config for thread
+        config = {"configurable": {"thread_id": thread_id}} if thread_id else {"configurable": {"thread_id": owner_id}}
+
         if files:
             inputs["files"] = files
-            
-        # Config for thread
-        config = {"configurable": {"thread_id": thread_id}} if thread_id else {"configurable": {"thread_id": owner_id}} 
+        elif thread_id:
+             # Try to retrieve existing files from state if not provided
+             # NOTE: config must be defined before calling get_state
+             try:
+                 current_state = graph.get_state(config)
+                 if current_state and current_state.values:
+                     existing_files = current_state.values.get("files", [])
+                     if existing_files:
+                          app_logger.info(f"run_agent: re-using {len(existing_files)} files from state")
+                          inputs["files"] = existing_files
+             except Exception as e:
+                 app_logger.warning(f"run_agent: failed to relieve files from state: {e}") 
         
         # Handle History
         # If explicit history provided (Stateless/Temporary mode), use it + query
@@ -259,6 +279,30 @@ def run_agent(query: str, owner_id: str, auth_token: str = None, files: List[dic
                 "awaiting_confirmation": final_state.get("awaiting_confirmation", False),
                 "confirmation_summary": final_state.get("confirmation_summary")
             }
+
+        # Check if plan contains only safe actions (SUMMARIZE, RETRIEVE_RAG). If so, skip confirmation.
+        safe_actions = {"SUMMARIZE", "RETRIEVE_RAG"}
+        try:
+             is_safe_plan = all(
+                 (step.get("action") if isinstance(step, dict) else str(step)) in safe_actions 
+                 for step in plan
+             )
+        except Exception:
+             # Safety fallback
+             is_safe_plan = False
+        
+        if is_safe_plan:
+             app_logger.info("Safe plan detected (summary/rag only) - skipping confirmation")
+             inputs["plan"] = plan
+             inputs["resuming"] = True
+             final_state = graph.invoke(inputs, config=config)
+             return {
+                "content": final_state.get("result", ""),
+                "tables": final_state.get("tables", []),
+                "charts": final_state.get("charts", []),
+                "awaiting_confirmation": final_state.get("awaiting_confirmation", False),
+                "confirmation_summary": final_state.get("confirmation_summary")
+             }
 
         # Generate a unique plan_id and confirmation summary using confirm_node logic (LLM)
         import uuid as _uuid

@@ -2,11 +2,14 @@
 
 import { useState, useRef, useEffect } from "react"
 
-function ChatInput({ onSendMessage, centered = false, isLoading = false, persistentFiles = [], onClearFiles }) {
-  const [message, setMessage] = useState("")
+function ChatInput({ onSendMessage, centered = false, isLoading = false, isAwaitingConfirmation = false, persistentFiles = [], onClearFiles, value, onChange }) {
+  const [internalMessage, setInternalMessage] = useState("")
   const [files, setFiles] = useState([])
   const fileInputRef = useRef(null)
   const textareaRef = useRef(null)
+  
+  const isControlled = value !== undefined
+  const message = isControlled ? value : internalMessage
 
   // Синхронизируем локальные файлы с persistent файлами
   useEffect(() => {
@@ -32,6 +35,16 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
     }
   }
 
+  // Обновлен обработчик изменения сообщения
+  const handleMessageChange = (e) => {
+    const newValue = e.target.value
+    if (isControlled && onChange) {
+      onChange(newValue)
+    } else {
+      setInternalMessage(newValue)
+    }
+  }
+
   // Автоматически изменяем размер при изменении текста
   useEffect(() => {
     adjustTextareaHeight()
@@ -48,13 +61,16 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
     const trimmedMessage = message.trim()
 
     // Проверяем, что есть либо текст, либо файлы
-    if ((trimmedMessage || files.length > 0) && !isLoading) {
+    if ((trimmedMessage || files.length > 0) && !isLoading && !isAwaitingConfirmation) {
       // Если нет текста, но есть файлы, добавляем сообщение по умолчанию
       const messageToSend = trimmedMessage || (files.length > 0 ? `Отправлено файлов: ${files.length}` : "")
 
       if (messageToSend) {
         onSendMessage(messageToSend, files)
-        setMessage("")
+        // Сброс значения должен осуществляться родителем при controlled mode
+        if (!isControlled) {
+             setInternalMessage("")
+        }      
         setFiles([])
         if (onClearFiles) {
           onClearFiles()
@@ -150,11 +166,11 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading}
+              disabled={isLoading || isAwaitingConfirmation}
               className={`p-3 transition-colors group flex-shrink-0 ${
-                isLoading ? "text-gray-300 cursor-not-allowed" : "text-gray-500 hover:text-blue-500"
+                isLoading || isAwaitingConfirmation ? "text-gray-300 cursor-not-allowed" : "text-gray-500 hover:text-blue-500"
               }`}
-              title={isLoading ? "Ожидание ответа..." : "Прикрепить файл"}
+              title={isLoading ? "Ожидание ответа..." : isAwaitingConfirmation ? "Подтвердите план действий" : "Прикрепить файл"}
             >
               <svg
                 width="18"
@@ -175,21 +191,23 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
             <textarea
               ref={textareaRef}
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              onChange={handleMessageChange}
               onKeyDown={handleKeyDown}
               placeholder={
                 isLoading
                   ? "Ожидание ответа..."
-                  : files.length > 0
-                    ? "Добавьте описание к файлам (необязательно)..."
-                    : centered
-                      ? "Задайте ваш вопрос..."
-                      : "Напишите сообщение..."
+                  : isAwaitingConfirmation
+                    ? "Подтвердите план действий выше, чтобы продолжить..."
+                    : files.length > 0
+                      ? "Добавьте описание к файлам (необязательно)..."
+                      : centered
+                        ? "Задайте ваш вопрос..."
+                        : "Напишите сообщение..."
               }
-              disabled={isLoading}
+              disabled={isLoading || isAwaitingConfirmation}
               className={`flex-1 resize-none border-0 outline-none overflow-y-auto chat-textarea ${
                 centered ? "py-4 text-base" : "py-3"
-              } ${isLoading ? "bg-gray-50 text-gray-400 cursor-not-allowed" : ""}`}
+              } ${isLoading || isAwaitingConfirmation ? "bg-gray-50 text-gray-400 cursor-not-allowed" : ""}`}
               style={{ 
                 lineHeight: '1.5',
                 scrollbarWidth: 'thin',
@@ -201,13 +219,13 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
             {/* Кнопка отправки */}
             <button
               type="submit"
-              disabled={(!message.trim() && files.length === 0) || isLoading}
+              disabled={(!message.trim() && files.length === 0) || isLoading || isAwaitingConfirmation}
               className={`p-3 transition-colors group flex-shrink-0 ${
-                (!message.trim() && files.length === 0) || isLoading
+                (!message.trim() && files.length === 0) || isLoading || isAwaitingConfirmation
                   ? "text-gray-300 cursor-not-allowed"
                   : "text-blue-500 hover:text-blue-600"
               }`}
-              title={isLoading ? "Ожидание ответа..." : "Отправить сообщение"}
+              title={isLoading ? "Ожидание ответа..." : isAwaitingConfirmation ? "Подтвердите план действий" : "Отправить сообщение"}
             >
               {isLoading ? (
                 <svg
@@ -246,7 +264,7 @@ function ChatInput({ onSendMessage, centered = false, isLoading = false, persist
             type="file"
             multiple
             onChange={handleFileSelect}
-            disabled={isLoading}
+            disabled={isLoading || isAwaitingConfirmation}
             className="hidden"
           />
         </form>

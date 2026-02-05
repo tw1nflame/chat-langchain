@@ -152,6 +152,8 @@ async def confirm_plan(chat_id: str, confirm: bool = True, plan_id: Optional[str
             from utils.storage_utils import save_table_parquet
 
             confirmation_summary = values.get('confirmation_summary')
+            enriched_tables_response = []
+            
             if confirmation_summary:
                 # Find all assistant messages in this chat that contain the confirmation summary (to guard against duplicates)
                 matching_msgs = db.query(Message).filter(Message.chat_id == chat_id, Message.role == 'assistant', Message.content.ilike(f"%{confirmation_summary.strip()}%"))
@@ -167,12 +169,23 @@ async def confirm_plan(chat_id: str, confirm: bool = True, plan_id: Optional[str
                         db.refresh(msg)
                         updated_msg_ids.append(str(msg.id))
 
-                        # Save tables for this message
+                        # Save tables for this message and prepare enriched tables for response
+                        # We only need one set of enriched tables (from any valid message) to return to main UI
+                        current_msg_enriched_tables = []
                         for idx, table in enumerate(tables):
                             try:
                                 save_table_parquet(table.get('rows', []), table.get('headers', []), str(msg.id), idx)
+                                t_copy = table.copy()
+                                t_copy['download_url'] = f"/api/v1/download/table/{msg.id}/{idx}/export.xlsx"
+                                current_msg_enriched_tables.append(t_copy)
                             except Exception as e:
                                 app_logger.error(f"confirm_plan: failed to save table {idx} for message {msg.id}: {e}")
+                                # Fallback: append original table if save fails, though download will fail
+                                current_msg_enriched_tables.append(table)
+                        
+                        # Use the first full successful enrichment as the response
+                        if not enriched_tables_response and current_msg_enriched_tables:
+                            enriched_tables_response = current_msg_enriched_tables
 
                         # Save charts for this message
                         for chart in charts:
@@ -190,7 +203,10 @@ async def confirm_plan(chat_id: str, confirm: bool = True, plan_id: Optional[str
         except Exception as e:
             app_logger.exception(f"confirm_plan_postupdate_failed: {e}")
 
-        return {"content": final.get("result", ""), "tables": final.get("tables", []), "charts": final.get("charts", [])}
+        # If we didn't get enriched tables (e.g. no matching message or exception), fall back to raw tables
+        final_tables = enriched_tables_response if enriched_tables_response else final.get("tables", [])
+
+        return {"content": final.get("result", ""), "tables": final_tables, "charts": final.get("charts", [])}
 
     except HTTPException:
         raise

@@ -82,19 +82,12 @@ def generate_viz(state: dict):
 
 # Node: Generate Summary
 def generate_summary(state: dict):
-    """Формирует краткий итоговый отчёт с ключевыми выводами (1-2 предложения) на основе данных и графиков.
+    """Produces a natural language response summarizing the result of the previous step (data insights OR task launch status).
 
     Description for planner/LLM summary:
-    - Purpose: given the executed SQL, returned tables, charts, and optional RAG/NWC context, produce
-      a concise and helpful natural-language summary for the user.
-    - Inputs:
-      - state["question"]: original user question
-      - state["query"]: SQL executed (if any)
-      - state["tables"] and state["charts"]: data produced by previous steps
-      - state["nwc_info"], state["rag_context"]: optional contextual info
-    - Outputs: {"result": <summary string>} — the natural-language answer to present to the user.
-    - Side effects: none.
-    - Notes for plan confirmation: the summary explicitly refers to what was executed (query/chart generation/training) and any limitations or missing context. For analytical requests, produce a very concise final report (1-2 sentences) that highlights key conclusions and, if appropriate, a short recommendation; avoid long per-article enumerations and instead rely on the accompanying table and charts for details.
+    - Purpose: given the executed previous step (SQL/Chart OR Training Launch), produce a concise and helpful natural-language message.
+    - If the previous step was Data/Chart: summarize key findings.
+    - If the previous step was Training Launch: simply report the task status (started/failed) without waiting for completion.
     """
     question = state["question"]
     query = state.get("query", "")

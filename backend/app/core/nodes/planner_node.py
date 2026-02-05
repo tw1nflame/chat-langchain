@@ -39,7 +39,7 @@ def planner(state: dict):
     # If a plan already exists in state (persisted by controller), skip re-planning.
     if state.get("plan"):
         existing = state.get("plan")
-        app_logger.info("Planner: existing plan found in state, skipping re-planning", extra={"plan_len": len(existing), "current_step": state.get("current_step", 0)})
+        app_logger.info("Planner: using plan from current state (skipping re-planning)", extra={"plan_len": len(existing), "current_step": state.get("current_step", 0)})
         return {"plan": state.get("plan"), "current_step": state.get("current_step", 0)}
 
     # Include history in context if available (simple concatenation for now)
@@ -61,6 +61,7 @@ def planner(state: dict):
         response = planner_chain.invoke({"question": f"{state['question']} {context_str} {files_context}"})
         # Try to parse JSON from the response
         content = response.content.strip()
+        app_logger.info(f"Planner raw output (before parsing): {content}")
 
         # Clean up code blocks if present
         match = re.search(r"```json(.*?)```", content, re.DOTALL | re.IGNORECASE)

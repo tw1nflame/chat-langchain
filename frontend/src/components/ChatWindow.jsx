@@ -17,6 +17,7 @@ function generateUUID() {
 function ChatWindow({ chat, onUpdateMessages }) {
   const [isLoading, setIsLoading] = useState(false)
   const [persistentFiles, setPersistentFiles] = useState([])
+  const [emptyInputMessage, setEmptyInputMessage] = useState("")
 
   // Debug: log chat render info
   try {
@@ -53,7 +54,9 @@ function ChatWindow({ chat, onUpdateMessages }) {
     const messagesWithUser = [...chat.messages, userMessage]
     onUpdateMessages(chat.id, messagesWithUser)
 
-    setIsLoading(true) // Устанавливаем состояние загрузки
+    setIsLoading(true)
+    // Clear the input in empty mode if needed (though it will unmount anyway)
+    setEmptyInputMessage("")
 
     try {
       console.log("[ChatWindow] Sending message: chatId=", chat.id, "content=", content, "files=", files)
@@ -139,6 +142,13 @@ function ChatWindow({ chat, onUpdateMessages }) {
   const isEmpty = chat.messages.length === 0
 
   if (isEmpty) {
+    const suggestions = [
+      "Расскажи, что ты умеешь",
+      "Проанализируй прогноз по торговой КЗ",
+      "Выведи прогноз на декабрь по всем статьям",
+      "Расскажи про base+ пайплайн"
+    ]
+
     // Пустой чат - форма по центру с приветствием
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 bg-white">
@@ -146,14 +156,32 @@ function ChatWindow({ chat, onUpdateMessages }) {
           <h1 className="text-4xl font-semibold text-gray-800 mb-4">Чем вам помочь?</h1>
           <p className="text-lg text-gray-600 mb-8">Задайте любой вопрос, загрузите файлы или начните новый разговор</p>
         </div>
-        <div className="w-full max-w-4xl">
+        <div className="w-full max-w-4xl space-y-6">
           <ChatInput
             onSendMessage={handleSendMessage}
             centered={true}
             isLoading={isLoading}
             persistentFiles={persistentFiles}
             onClearFiles={handleClearFiles}
+            value={emptyInputMessage}
+            onChange={setEmptyInputMessage}
           />
+          
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium text-gray-500 pl-1">Примеры промптов</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {suggestions.map((text, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setEmptyInputMessage(text)}
+                  disabled={isLoading}
+                  className="p-4 text-left border rounded-xl hover:bg-gray-50 transition-colors text-sm text-gray-700 bg-white shadow-sm hover:shadow-md border-gray-200"
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     )
@@ -176,6 +204,7 @@ function ChatWindow({ chat, onUpdateMessages }) {
       return
     }
 
+    setIsLoading(true)
     try {
       const resp = await confirmPlan(serverId, confirm, planId)
 
@@ -204,8 +233,13 @@ function ChatWindow({ chat, onUpdateMessages }) {
     } catch (e) {
       console.error('Confirm plan failed', e)
       alert('Ошибка при подтверждении плана: ' + (e.message || e))
+    } finally {
+      setIsLoading(false)
     }
   }
+
+  // Determine if input should be disabled due to pending confirmation
+  const isAwaitingConfirmation = chat?.messages?.length > 0 && chat.messages[chat.messages.length - 1].awaiting_confirmation;
 
   // Чат с сообщениями - обычная компоновка
   return (
@@ -215,6 +249,7 @@ function ChatWindow({ chat, onUpdateMessages }) {
         onSendMessage={handleSendMessage}
         centered={false}
         isLoading={isLoading}
+        isAwaitingConfirmation={isAwaitingConfirmation}
         persistentFiles={persistentFiles}
         onClearFiles={handleClearFiles}
       />

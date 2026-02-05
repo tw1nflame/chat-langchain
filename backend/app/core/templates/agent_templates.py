@@ -165,7 +165,7 @@ if "Previous Step Result" indicates an action was performed:
 
 If SQL Query was "NO_SQL" AND "Previous Step Result" is empty/insignificant:
 - If the user's question was a data request (e.g. "compare", "show") but NO_SQL was returned:
-  - ASK FOR CLARIFICATION in Russian (e.g. "Пожалуйста, уточните, по какой статье вы хотите сравнить данные?" or "Please specify the article.").
+  - ASK FOR CLARIFICATION in Russian about what specific data or article is needed.
 - Otherwise, simply answer the user's question or greeting naturally (e.g. "Hello! How can I help you today?").
 
 Otherwise (if SQL was executed):
@@ -194,8 +194,10 @@ Your goal is to create a step-by-step plan to answer the user's question.
 
 Available Actions:
 - GENERATE_SQL: Generate a SQL query to retrieve general data.
+  - USE THIS for queries about "Налоги" (Taxes), even if the user asks for "forecasts" or "plans" for Taxes.
+  - USE THIS for general questions not covered by specific NWC nodes.
 - GENERATE_NWC_SQL: Use this INSTEAD of GENERATE_SQL if the query is about "ЧОК" (NWC) or mentions specific NWC articles.
-  - KEYWORDS: "Торговая ДЗ", "Прочая ДЗ", "Авансы", "Налоги", "Кредиторская задолженность", "Резерв", "Задолженность", "Торговая КЗ".
+  - KEYWORDS: "Торговая ДЗ", "Прочая ДЗ", "Авансы", "Кредиторская задолженность", "Резерв", "Задолженность", "Торговая КЗ".
   - Use this even if the user verbs are "extract", "get", "find" (e.g., "извлеки данные по торговой кз").
 - EXECUTE_SQL: Execute the generated SQL query and format the results.
 - GENERATE_VIZ: Generate a visualization (chart) based on the data.
@@ -205,11 +207,12 @@ Available Actions:
   - Only use UPDATE_RAG if the user wants to ADD the file to the system.
 - RETRIEVE_RAG: Search the knowledge base (vector store) for information.
   - Use when the user asks a question that might be in the uploaded documents.
-  - DO NOT use this if the question is about specific financial articles (NWC, tax, debt) - use GENERATE_NWC_SQL instead.
+  - DO NOT use this if the question is about specific financial articles (NWC, debt) - use GENERATE_NWC_SQL instead. Use GENERATE_SQL for Taxes.
   - Keywords: "search", "find", "what is", "tell me about", "поиск", "найди", "что написано в", "concerning".
   - CRITICAL: When you use RETRIEVE_RAG, the subsequent SUMMARIZE step MUST NOT invent or add facts not present in the retrieved content. Only summarize/paraphrase the RAG results. If the retrieved content is incomplete or ambiguous, explicitly state that and request clarification.
   - If the question is NOT about SQL/Data but about general knowledge or document content, use this.
-- NWC_ANALYZE: Analyze forecast for a single article. Use when the user explicitly asks something like "Проанализируй прогноз на <название статьи>" or "проанализируй прогноз по статье <название>".
+- NWC_ANALYZE: Analyze forecast for a single article (EXCLUDING Taxes/Налоги). Use when the user explicitly asks something like "Проанализируй прогноз на <название статьи>" or "проанализируй прогноз по статье <название>".
+  - NOTE: If the article is "Налоги" (Taxes), use GENERATE_SQL instead.
   - The node should extract the article name (must be one of the configured `default_articles` / keys under `model_article`), look up the target `model` and `pipeline` in the NWC config, and generate a SQL query that returns the latest 13 rows from `results_data` for that article/pipeline and model (including `abs_deviation` and `rel_deviation`). Return ONLY the SQL query.
   - VISUALIZATION RULE: If the user's question is an analysis request (contains words like "проанализируй","проанализировать","проанализируй прогноз","сравни","проанализируй прогноз по"), the planner SHOULD include a `GENERATE_VIZ` step immediately after `EXECUTE_SQL` in the plan to build a time-series visualization with the following requirements:
     - X Axis: `date` (temporal)
@@ -218,7 +221,8 @@ Available Actions:
     - Tooltip must include: `date` (localized), `fact` (Факт), `forecast_value` (Прогноз), `abs_deviation` (Отклонение), `rel_deviation` (Отклонение %), `pipeline` (Модель)
     - Use `width: "container"` and `height: 300` and translate axis/tooltip titles into Russian.
     - If the user explicitly asked for a deviation chart ("график отклонений"), follow the deviation-chart rules in the visualization template (scatter with thresholds); otherwise use the time series described above.
-- NWC_SHOW_FORECAST: Show forecast for multiple articles or all articles. Use when the user asks e.g. "выведи прогноз по всем статьям на декабрь 2025" or "выведи прогноз по статьям X, Y".
+- NWC_SHOW_FORECAST: Show forecast for multiple articles or all articles (EXCLUDING Taxes/Налоги). Use when the user asks e.g. "выведи прогноз по всем статьям на декабрь 2025" or "выведи прогноз по статьям X, Y".
+  - CRITICAL: Do NOT use this for "Налоги" (Taxes) or if the requested article is "Налоги". For Taxes, ALWAYS use GENERATE_SQL.
   - The node should extract the list of articles (array) or 'ALL' from the user's request, optional model (applies to all), optional pipeline, and optional date.
   - Rules:
     - If a model is provided in the prompt, use it for ALL selected articles. If the pipeline is NOT provided alongside a user-specified model, default pipeline to "base". Do NOT generate visualizations for this action.
@@ -233,8 +237,8 @@ Available Actions:
 
 Rules:
 1. If the user asks for data (e.g. "show sales", "compare results", "get forecast", "extract data"), you MUST include a generation step (GENERATE_SQL or GENERATE_NWC_SQL) followed by EXECUTE_SQL.
-  - Check if the data request is for "NWC" or specific articles (receivables, payables, taxes). If so, use GENERATE_NWC_SQL.
-  - Use GENERATE_NWC_SQL for "extract data for X" where X is a financial bucket.
+  - Check if the data request is for "NWC" or specific articles (receivables, payables). If so, use GENERATE_NWC_SQL.
+  - Use GENERATE_NWC_SQL for "extract data for X" where X is a financial bucket (except "Налоги").
 2. If the user explicitly asks for a chart, plot, or graph, OR if the data is time-series/categorical and suitable for visualization, you SHOULD include GENERATE_VIZ.
   - EXCEPTION: If the user's phrasing explicitly requests only to "just output" the data (Russian examples: "просто выведи", "выведи", "только выведи", "без графика"), or otherwise clearly indicates they want only a tabular/textual output without visualization, DO NOT include GENERATE_VIZ in the plan. When in doubt, prefer NOT to generate a chart and ask a short clarification (e.g., "Вы хотите график или просто табличный вывод?").
 3. Use TRAIN_MODEL ONLY if the user asks to START/RUN a process (e.g. "run forecast", "start training").
@@ -250,6 +254,12 @@ Rules:
    - If the "Question" contains sufficient information to execute the task, DO NOT use "History". 
    - Only refer to history if the "Question" is ambiguous or strictly refers back to previous interactions.
    - Try to solve the problem using ONLY the "Question" first.
+8. **CLARIFICATION/RESUMPTION**:
+   - If the user's input is a short answer (e.g. "base", "2025", "yes") that answers a clarification request in the "History", YOU MUST RESUME the original intent.
+     - Example: History=["Run forecast", "Which pipeline?"], Question="base" -> Plan=[{{ "action": "TRAIN_MODEL" }}, {{ "action": "SUMMARIZE" }}].
+     - Example: History=["Analyze Sales", "Which year?"], Question="2024" -> Plan=[{{ "action": "GENERATE_NWC_SQL" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "SUMMARIZE" }}].
+   - If the user provides/uploads a file (e.g. "Files Attached" is present or message says "Sent files") and the history shows a request for a file (for training or analysis), YOU MUST RESUME the `TRAIN_MODEL` or data loading action.
+     - Example: History=["Run forecast", "Please upload file"], Question="Sent files: 1" -> Plan=[{{ "action": "TRAIN_MODEL" }}, {{ "action": "SUMMARIZE" }}].
 
 Valid Plans (Examples):
 - [{{ "action": "GENERATE_SQL" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "SUMMARIZE" }}]

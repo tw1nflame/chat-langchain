@@ -9,7 +9,7 @@ from core.nodes.shared_resources import llm
 
 # Node: Call NWC Train Service
 def call_nwc_train(state: dict):
-    """Upload training data and request forecast training/prediction from the external NWC service.
+    """Launch the background training job (mentioning pipeline/items) and report start status immediately.
 
     Description for planner/LLM summary:
     - Purpose: using an uploaded file and extracted parameters (pipeline, items, date), call the external NWC
@@ -75,6 +75,7 @@ def call_nwc_train(state: dict):
        - Check the Current Request for specific items involved (e.g. "Торговая КЗ", "Прочая ДЗ").
        - Example: If history has "Forecast for Item A" and current request is "base", return ["Item A"].
        - Example: If request is "base for Торговая КЗ", return ["Торговая КЗ"].
+       - IMPORTANT: If the user provides a SHORT input (like "base", "2025") and the Context/History contains the full request ("Run for Article X"), YOU MUST INFER the article from history.
        - Return ["__all__"] ONLY if "all"/"everything" is explicitly requested or NO specific items exist in Request OR Context.
        
     3. Date:
