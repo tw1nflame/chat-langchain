@@ -5,7 +5,7 @@ import re
 import logging
 import yaml
 from sqlalchemy import text
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from core.config import settings
 from core.nodes.shared_resources import llm, engine, db, create_sql_chain
 

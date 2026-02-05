@@ -46,8 +46,8 @@ def update_rag_node(state: Dict[str, Any]):
     errors = []
     
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
+        chunk_size=500,
+        chunk_overlap=100,
         length_function=len,
         is_separator_regex=False
     )
@@ -144,11 +144,7 @@ def retrieve_rag_node(state: Dict[str, Any]):
         vector_store = get_vector_store()
         # Search for top k relevant documents
         # We can make k configurable via settings if needed
-        docs = vector_store.max_marginal_relevance_search(
-            question,
-            k=6,
-            fetch_k=25
-        )
+        docs = vector_store.similarity_search(question, k=15)
 
         for i, doc in enumerate(docs):
             app_logger.info(f"CHUNK {i}:\n{doc.page_content}\n---")
