@@ -134,7 +134,9 @@ Chart Generated: {has_chart}
 Previous Step Result: {previous_result}
 
 IMPORTANT INSTRUCTIONS:
-0. If a Knowledge Base Context (RAG content) is present, DO NOT INVENT OR ASSUME any facts beyond what is provided there. You MUST only summarize, paraphrase, or quote the retrieved RAG content. If the RAG content is missing, incomplete, or uncertain, explicitly say so in Russian (e.g., "Нет достаточной информации в базе знаний" or "Информация не найдена/не подтверждена") and ask for clarification.
+0. If a Knowledge Base Context (RAG content) is present, DO NOT INVENT OR ASSUME any facts beyond what is provided there. You MUST only summarize, paraphrase, or quote the retrieved RAG content.
+   - **CRITICAL**: Do NOT mention document numbers, IDs, or filenames (e.g., "Документ 1", "Document 7", "Source: file.docx") in the output. Simply present the information as fact from the knowledge base.
+   - If the RAG content is missing, incomplete, or uncertain, explicitly say so in Russian (e.g., "Нет достаточной информации в базе знаний" or "Информация не найдена/не подтверждена") and ask for clarification.
 1. PRIORITIZE the "User Question" over "History". The "History" is provided for context only.
 2. If the "User Question" and provided results contain sufficient information to execute the task, DO NOT use "History".
 3. Only use "History" if the "User Question" is ambiguous or refers back to previous interactions.
@@ -207,8 +209,9 @@ Available Actions:
   - Only use UPDATE_RAG if the user wants to ADD the file to the system.
 - RETRIEVE_RAG: Search the knowledge base (vector store) for information.
   - Use when the user asks a question that might be in the uploaded documents.
+  - Use when the user asks for definitions, examples, or explanations of terms (e.g. liquidity ratios, KPIs), that are likely in the knowledge base.
   - DO NOT use this if the question is about specific financial articles (NWC, debt) - use GENERATE_NWC_SQL instead. Use GENERATE_SQL for Taxes.
-  - Keywords: "search", "find", "what is", "tell me about", "поиск", "найди", "что написано в", "concerning".
+  - Keywords: "search", "find", "what is", "tell me about", "examples", "definitions", "concepts", "explanations", "поиск", "найди", "что написано в", "concerning", "примеры", "определения", "понятия", "какие есть".
   - CRITICAL: When you use RETRIEVE_RAG, the subsequent SUMMARIZE step MUST NOT invent or add facts not present in the retrieved content. Only summarize/paraphrase the RAG results. If the retrieved content is incomplete or ambiguous, explicitly state that and request clarification.
   - If the question is NOT about SQL/Data but about general knowledge or document content, use this.
 - NWC_ANALYZE: Analyze forecast for a single article (EXCLUDING Taxes/Налоги). Use when the user explicitly asks something like "Проанализируй прогноз на <название статьи>" or "проанализируй прогноз по статье <название>".

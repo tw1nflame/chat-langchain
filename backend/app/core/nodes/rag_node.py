@@ -89,6 +89,8 @@ def update_rag_node(state: Dict[str, Any]):
                     "type": "docx"
                 }]
             )
+            for i, doc in enumerate(chunks):
+                app_logger.info(f"CHUNK {i}:\n{doc.page_content}\n---")
             documents.extend(chunks)
             processed_files.append(file_name)
             
@@ -142,7 +144,14 @@ def retrieve_rag_node(state: Dict[str, Any]):
         vector_store = get_vector_store()
         # Search for top k relevant documents
         # We can make k configurable via settings if needed
-        docs = vector_store.similarity_search(question, k=5)
+        docs = vector_store.max_marginal_relevance_search(
+            question,
+            k=6,
+            fetch_k=25
+        )
+
+        for i, doc in enumerate(docs):
+            app_logger.info(f"CHUNK {i}:\n{doc.page_content}\n---")
         
         if not docs:
             app_logger.info("retrieve_rag_node: No relevant documents found.")
