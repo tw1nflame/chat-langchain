@@ -2,7 +2,7 @@ import inspect
 import json
 from typing import Dict, Any
 from core.logging_config import app_logger
-from core.nodes.shared_resources import llm
+from core.nodes.shared_resources import llm, strip_think_tags
 from core.nodes.sql_nodes import generate_query, execute_and_format
 from core.nodes.viz_summary_nodes import generate_viz, generate_summary
 from core.nodes.planner_node import planner
@@ -131,7 +131,7 @@ def confirm_plan(state: Dict[str, Any]):
     try:
         app_logger.info("confirm_plan: invoking LLM to generate confirmation summary")
         resp = llm.invoke(prompt)
-        summary = resp.content.strip()
+        summary = strip_think_tags(resp.content)
         app_logger.info(f"confirm_plan: summary generated (len={len(summary)})")
 
         return {

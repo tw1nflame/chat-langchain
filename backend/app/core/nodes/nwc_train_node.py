@@ -5,7 +5,7 @@ import httpx
 from datetime import datetime
 from core.config import settings
 from core.logging_config import app_logger
-from core.nodes.shared_resources import llm
+from core.nodes.shared_resources import llm, strip_think_tags
 
 # Node: Call NWC Train Service
 def call_nwc_train(state: dict):
@@ -87,7 +87,7 @@ def call_nwc_train(state: dict):
     try:
         app_logger.info("call_nwc_train: invoking LLM for param extraction")
         response = llm.invoke(extraction_prompt)
-        content = response.content.strip()
+        content = strip_think_tags(response.content)
         app_logger.info(f"call_nwc_train: LLM raw response: {content}")
 
         match = re.search(r"```json(.*?)```", content, re.DOTALL | re.IGNORECASE)
