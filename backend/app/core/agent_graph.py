@@ -9,6 +9,7 @@ from core.nodes.sql_nodes import generate_query, execute_and_format
 from core.nodes.planner_node import planner
 from core.nodes.nwc_train_node import call_nwc_train
 from core.nodes.viz_summary_nodes import generate_viz, generate_summary
+from core.nodes.target_model_node import target_model_node
 
 # Define State
 class GraphState(TypedDict):
@@ -96,6 +97,7 @@ builder.add_node("call_nwc_train", call_nwc_train)
 builder.add_node("generate_summary", generate_summary)
 builder.add_node("update_rag", update_rag_node)
 builder.add_node("retrieve_rag", retrieve_rag_node)
+builder.add_node("target_model_node", target_model_node)
 
 # Define flow
 builder.set_entry_point("planner")
@@ -130,6 +132,7 @@ builder.add_conditional_edges(
         "UPDATE_RAG": "update_rag",
         "RETRIEVE_RAG": "retrieve_rag",
         "SUMMARIZE": "generate_summary",
+        "EXTRACT_TARGET_MODEL": "target_model_node",
         "end": END
     }
 )
@@ -144,6 +147,7 @@ builder.add_edge("generate_viz", "next_step")
 builder.add_edge("call_nwc_train", "next_step")
 builder.add_edge("update_rag", "next_step")
 builder.add_edge("retrieve_rag", "next_step")
+builder.add_edge("target_model_node", "next_step")
 builder.add_edge("generate_summary", END)
 
 builder.add_edge("next_step", "executor")
@@ -281,7 +285,7 @@ def run_agent(query: str, owner_id: str, auth_token: str = None, files: List[dic
             }
 
         # Check if plan contains only safe actions (SUMMARIZE, RETRIEVE_RAG). If so, skip confirmation.
-        safe_actions = {"SUMMARIZE", "RETRIEVE_RAG"}
+        safe_actions = {"SUMMARIZE", "RETRIEVE_RAG", "EXTRACT_TARGET_MODEL"}
         try:
              is_safe_plan = all(
                  (step.get("action") if isinstance(step, dict) else str(step)) in safe_actions 

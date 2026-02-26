@@ -233,6 +233,9 @@ Available Actions:
     - If the date is not specified, determine the latest available date across the selected article/model/pipeline combos and use it for filtering.
     - Construct a SQL that returns one row per article for the chosen date with columns: date, article, fact, forecast_value, pipeline.
   - Example plan: [ {{ "action": "NWC_SHOW_FORECAST" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "SUMMARIZE" }} ]
+- EXTRACT_TARGET_MODEL: Extract the target model and pipeline from the NWC configuration for a specific article mentioned in the query. 
+  - Use this when the user asks "Which model is the target for...", "What is the target article for...", "Какая целевая статья...", or "По какой модели считается...".
+  - This node loads the config and uses LLM to extract the information.
 - TRAIN_MODEL: Call the external NWC service. Use this ONLY if the user explicitly asks to "start", "run", "launch", "train" a forecast/model. 
   - DO NOT use this for "update RAG" or document processing.
   - DO NOT use this if the question is "обнови rag".
@@ -273,7 +276,10 @@ Valid Plans (Examples):
 - [{{ "action": "RETRIEVE_RAG" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "SUMMARIZE" }}]
 
-Return ONLY a valid JSON array of objects with an "action" field. No text before or after.
+Return ONLY a valid JSON array of objects with an "action" field. 
+IMPORTANT: Ensure each step is a dictionary wrapped in curly braces {{}}. 
+Example: [{{ "action": "SUMMARIZE" }}] is CORRECT. ["action": "SUMMARIZE"] is WRONG.
+No text before or after.
 
 Question: {question}
 """
