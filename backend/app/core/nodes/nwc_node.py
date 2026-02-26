@@ -561,7 +561,8 @@ def nwc_show_forecast(state: Dict[str, Any]):
         p = pipeline_map[a]
         pipeline_conds.append(f"(article = '{db_a}' AND pipeline = '{p}')")
 
-    where_clause = f"article IN ({', '.join([f"'{db_articles[a]}'" for a in articles])}) AND ( {' OR '.join(pipeline_conds)} ) AND date = '{target_date}'"
+    articles_in = ', '.join([f"'{db_articles[a]}'" for a in articles])
+    where_clause = f"article IN ({articles_in}) AND ( {' OR '.join(pipeline_conds)} ) AND date = '{target_date}'"
 
     query = f"""SELECT
     date,
