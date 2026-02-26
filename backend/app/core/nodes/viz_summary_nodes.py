@@ -6,7 +6,7 @@ from langchain.prompts import PromptTemplate
 from core.templates.agent_templates import viz_template, summary_template
 from core.config import settings
 from core.logging_config import app_logger
-from core.nodes.shared_resources import llm
+from core.nodes.shared_resources import llm, strip_think_tags
 
 viz_prompt = PromptTemplate.from_template(viz_template)
 summary_prompt = PromptTemplate.from_template(summary_template)
@@ -55,7 +55,7 @@ def generate_viz(state: dict):
     try:
         app_logger.info("generate_viz: calling LLM for chart config")
         response = viz_chain.invoke({"columns_sample": columns_sample_str, "input": question, "history": history_str})
-        viz_json = response.content.strip()
+        viz_json = strip_think_tags(response.content)
         app_logger.info(f"generate_viz: LLM raw response: {viz_json}")
 
         # Cleanup code blocks
@@ -164,7 +164,7 @@ def generate_summary(state: dict):
             "history": history_str,
             "data_preview": data_preview
         })
-        summary = response.content.strip()
+        summary = strip_think_tags(response.content)
         # Clean up code blocks if any
         if summary.startswith("```"):
             summary = summary.strip("`")

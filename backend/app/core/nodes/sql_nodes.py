@@ -6,7 +6,7 @@ from langchain.prompts import PromptTemplate
 from sqlalchemy import text
 from core.templates.agent_templates import template
 from core.logging_config import app_logger
-from core.nodes.shared_resources import llm, engine, db, create_sql_chain
+from core.nodes.shared_resources import llm, engine, db, create_sql_chain, strip_think_tags
 
 # Define custom prompt to avoid Markdown
 prompt = PromptTemplate.from_template(template)
@@ -35,7 +35,7 @@ def generate_query(state: dict):
     history = state.get("chat_history", [])
     history_str = json.dumps(history[-5:], ensure_ascii=False) if history else "[]"
     try:
-        query = sql_chain.invoke({"question": question, "history": history_str})
+        query = strip_think_tags(sql_chain.invoke({"question": question, "history": history_str}))
         # Clean up markdown if present
         # robust regex extraction for ```sql ... ``` blocks
         match = re.search(r"```sql(.*?)```", query, re.DOTALL | re.IGNORECASE)

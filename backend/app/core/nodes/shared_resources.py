@@ -3,6 +3,12 @@ from langchain_community.utilities import SQLDatabase
 from langchain.chains import create_sql_query_chain
 from sqlalchemy import create_engine
 from core.config import settings
+import re
+
+
+def strip_think_tags(text: str) -> str:
+    """Remove <think>...</think> blocks emitted by reasoning models (e.g. qwen3)."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 # Initialize Database engine and SQLDatabase
 connect_args = {}

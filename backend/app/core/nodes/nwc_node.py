@@ -7,7 +7,7 @@ import yaml
 from sqlalchemy import text
 from langchain_core.prompts import PromptTemplate
 from core.config import settings
-from core.nodes.shared_resources import llm, engine, db, create_sql_chain
+from core.nodes.shared_resources import llm, engine, db, create_sql_chain, strip_think_tags
 
 # Logger
 app_logger = logging.getLogger("uvicorn")
@@ -173,11 +173,11 @@ def generate_nwc_query(state: Dict[str, Any]):
     
     try:
         app_logger.info(f"generate_nwc_query: generating SQL for '{question}'")
-        query = sql_chain.invoke({
+        query = strip_think_tags(sql_chain.invoke({
             "question": question, 
             "history": history_str,
             "nwc_config": config_str
-        })
+        }))
         
         # Clean up markdown
         match = re.search(r"```sql(.*?)```", query, re.DOTALL | re.IGNORECASE)
@@ -269,7 +269,7 @@ def nwc_analyze(state: Dict[str, Any]):
     try:
         app_logger.info("nwc_analyze: invoking LLM for parameter extraction")
         resp = llm.invoke(extraction_prompt)
-        content = resp.content.strip()
+        content = strip_think_tags(resp.content)
         app_logger.info(f"nwc_analyze: LLM raw response: {content}")
 
         match = re.search(r"```json(.*?)```", content, re.DOTALL | re.IGNORECASE)
@@ -409,7 +409,7 @@ def nwc_show_forecast(state: Dict[str, Any]):
     try:
         app_logger.info("nwc_show_forecast: invoking LLM for parameter extraction")
         resp = llm.invoke(extraction_prompt)
-        content = resp.content.strip()
+        content = strip_think_tags(resp.content)
         app_logger.info(f"nwc_show_forecast: LLM raw response: {content}")
 
         match = re.search(r"```json(.*?)```", content, re.DOTALL | re.IGNORECASE)

@@ -8,7 +8,7 @@ from core.config import settings
 from core.logging_config import app_logger
 import os
 import httpx
-from core.nodes.shared_resources import llm
+from core.nodes.shared_resources import llm, strip_think_tags
 from core.nodes.nwc_train_node import call_nwc_train
 
 planner_prompt = PromptTemplate.from_template(planner_template)
@@ -60,7 +60,7 @@ def planner(state: dict):
     try:
         response = planner_chain.invoke({"question": f"{state['question']} {context_str} {files_context}"})
         # Try to parse JSON from the response
-        content = response.content.strip()
+        content = strip_think_tags(response.content)
         app_logger.info(f"Planner raw output (before parsing): {content}")
 
         # Clean up code blocks if present
@@ -71,6 +71,14 @@ def planner(state: dict):
              match_generic = re.search(r"```(.*?)```", content, re.DOTALL)
              if match_generic:
                  content = match_generic.group(1).strip()
+
+        # Attempt to fix common JSON errors before parsing
+        # Fix: ["action": "VALUE"] -> [{"action": "VALUE"}]
+        if content.startswith('[') and content.endswith(']') and '"action":' in content and '{' not in content:
+            app_logger.warning("Planner produced invalid JSON (missing braces). Attempting repair...")
+            # Naive repair: wrap the inside of [] in {}
+            inner = content[1:-1].strip()
+            content = f"[{{{inner}}}]"
 
         plan = json.loads(content)
         app_logger.info(f"Planner plan generated: {plan}")
