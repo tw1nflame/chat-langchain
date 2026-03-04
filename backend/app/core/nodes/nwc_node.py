@@ -361,6 +361,111 @@ LIMIT 13;"""
     }
 
 
+def generate_nwc_viz(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Генерирует спецификацию Vega-Lite для анализа прогноза NWC по шаблону (без вызова LLM).
+
+    Description for planner/LLM summary:
+    - Purpose: use the `nwc_info` metadata (article, model, pipeline, target_date) stored by `nwc_analyze`
+      to build a pre-defined Vega-Lite v5 chart spec — a two-line time-series chart overlaying
+      `fact` and `forecast_value`, with deviation info in tooltips. No LLM call is made.
+    - Inputs:
+      - state["nwc_info"]: dict with at least {"article", "model", "pipeline"} keys.
+      - state["tables"]: used only to verify data is available before building the spec.
+    - Outputs: {"charts": [ {"title": ..., "spec": <vega-lite-spec>} ]} or {"charts": []} if no data.
+    - Side effects: none.
+    - Notes for plan confirmation: this step creates a chart specification using a fixed template
+      (no AI generation). The frontend will render the chart from the spec.
+    """
+    app_logger.info("generate_nwc_viz: building chart spec from template")
+    tables = state.get("tables", [])
+    if not tables or not tables[0].get("rows"):
+        app_logger.info("generate_nwc_viz: no data, skipping chart")
+        return {"charts": []}
+
+    nwc_info = state.get("nwc_info") or {}
+    article = nwc_info.get("article", "")
+    model = nwc_info.get("model", "")
+    pipeline = nwc_info.get("pipeline", "")
+    target_date = nwc_info.get("target_date", "")
+
+    # Build a readable title
+    title_parts = [f"Анализ прогноза: {article}" if article else "Анализ прогноза NWC"]
+    if model:
+        title_parts.append(f"модель {model}")
+    if pipeline:
+        title_parts.append(f"пайплайн {pipeline}")
+    chart_title = ", ".join(title_parts)
+
+    spec = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "description": chart_title,
+        "width": "container",
+        "height": 300,
+        "data": {"name": "table_data"},
+        "layer": [
+            {
+                "mark": {"type": "line", "point": {"size": 70, "filled": True}},
+                "encoding": {
+                    "x": {
+                        "field": "date",
+                        "type": "temporal",
+                        "title": "Дата",
+                        "axis": {"format": "%Y-%m"}
+                    },
+                    "y": {
+                        "field": "fact",
+                        "type": "quantitative",
+                        "title": "Значение (млн. руб.)"
+                    },
+                    "color": {
+                        "datum": "Факт",
+                        "type": "nominal",
+                        "scale": {"domain": ["Факт", "Прогноз"], "range": ["#1f77b4", "#ff7f0e"]},
+                        "legend": {"title": "Показатель"}
+                    },
+                    "tooltip": [
+                        {"field": "date", "type": "temporal", "title": "Дата", "format": "%Y-%m-%d"},
+                        {"field": "fact", "type": "quantitative", "title": "Факт", "format": ".2f"},
+                        {"field": "forecast_value", "type": "quantitative", "title": "Прогноз", "format": ".2f"},
+                        {"field": "abs_deviation", "type": "quantitative", "title": "Абс. отклонение", "format": ".2f"},
+                        {"field": "rel_deviation", "type": "quantitative", "title": "Отн. отклонение", "format": ".1%"}
+                    ]
+                }
+            },
+            {
+                "mark": {"type": "line", "point": {"size": 70, "filled": True}, "strokeDash": [6, 3]},
+                "encoding": {
+                    "x": {
+                        "field": "date",
+                        "type": "temporal"
+                    },
+                    "y": {
+                        "field": "forecast_value",
+                        "type": "quantitative"
+                    },
+                    "color": {
+                        "datum": "Прогноз",
+                        "type": "nominal",
+                        "scale": {"domain": ["Факт", "Прогноз"], "range": ["#1f77b4", "#ff7f0e"]},
+                        "legend": {"title": "Показатель"}
+                    },
+                    "tooltip": [
+                        {"field": "date", "type": "temporal", "title": "Дата", "format": "%Y-%m-%d"},
+                        {"field": "fact", "type": "quantitative", "title": "Факт", "format": ".2f"},
+                        {"field": "forecast_value", "type": "quantitative", "title": "Прогноз", "format": ".2f"},
+                        {"field": "abs_deviation", "type": "quantitative", "title": "Абс. отклонение", "format": ".2f"},
+                        {"field": "rel_deviation", "type": "quantitative", "title": "Отн. отклонение", "format": ".1%"}
+                    ]
+                }
+            }
+        ],
+        "resolve": {"scale": {"y": "shared"}}
+    }
+
+    app_logger.info(f"generate_nwc_viz: chart spec built for article='{article}', model='{model}', pipeline='{pipeline}'")
+    return {"charts": [{"title": chart_title, "spec": spec}]}
+
+
 def nwc_show_forecast(state: Dict[str, Any]):
     """
     Формирует SQL-запрос для извлечения реальных прогнозов для целевого периода по целевым моделям для выбранных статей (не выполняет SQL).

@@ -203,10 +203,11 @@ def retrieve_rag_node(state: Dict[str, Any]):
     """Retrieve relevant knowledge base context for the user's question from the vector store.
 
     Description for planner/LLM summary:
-    - Purpose: given `state["question"]`, perform a similarity search in the vector store and return
+    - Purpose: given `state["question"]` (and optionally `state["chat_history"]`), perform a similarity search in the vector store and return
       a concatenated context string (top-k documents) suitable to include in downstream LLM prompts.
     - Inputs:
       - state["question"]: natural language query to search the KB for.
+      - state["chat_history"]: optional recent history used to resolve ambiguous references (e.g. "эту модель").
     - Outputs:
       - {"rag_context": <string>} containing formatted snippets from the most relevant documents or
         an explanatory message when nothing is found.
@@ -219,12 +220,23 @@ def retrieve_rag_node(state: Dict[str, Any]):
     if not question:
          return {"rag_context": ""}
 
+    # Build an enriched search query by prepending recent history so that
+    # ambiguous references like "эту модель", "this article" get resolved in vector search.
+    history = state.get("chat_history", [])
+    if history:
+        recent = history[-3:]  # last 3 messages are enough for context
+        history_prefix = " ".join(str(m) for m in recent)
+        search_query = f"{history_prefix} {question}"
+        app_logger.info(f"retrieve_rag_node: enriched search query with {len(recent)} history messages")
+    else:
+        search_query = question
+
     try:
         vector_store = get_vector_store()
         
         filter_condition = None
         # Custom logic for Nornickel
-        if "норникель" in question.lower():
+        if "норникель" in search_query.lower():
             try:
                 from qdrant_client.http import models as rest
                 filter_condition = rest.Filter(
@@ -241,7 +253,7 @@ def retrieve_rag_node(state: Dict[str, Any]):
 
         # Search for top k relevant documents
         # We can make k configurable via settings if needed
-        docs = vector_store.similarity_search(question, k=15, filter=filter_condition)
+        docs = vector_store.similarity_search(search_query, k=15, filter=filter_condition)
 
         for i, doc in enumerate(docs):
             app_logger.info(f"CHUNK {i}:\n{doc.page_content}\n---")

@@ -3,7 +3,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from core.logging_config import app_logger
 import json
-from core.nodes.nwc_node import generate_nwc_query, nwc_analyze, nwc_show_forecast
+from core.nodes.nwc_node import generate_nwc_query, nwc_analyze, nwc_show_forecast, generate_nwc_viz
 from core.nodes.rag_node import update_rag_node, retrieve_rag_node
 from core.nodes.sql_nodes import generate_query, execute_and_format
 from core.nodes.planner_node import planner
@@ -42,7 +42,7 @@ class GraphState(TypedDict):
     # Extended context
     auth_token: Optional[str]
     files: Optional[List[dict]] # List of uploaded files info
-    chat_history: Optional[List[str]] # Simple history of questions
+    chat_history: Optional[List] # Conversation history: list of {"role":"user"|"assistant", "content":"..."} dicts
     nwc_info: Optional[dict] # Info about NWC article and model used
     rag_context: Optional[str] # Retrieved content from RAG
 
@@ -90,6 +90,7 @@ builder.add_node("next_step", next_step)
 builder.add_node("generate_query", generate_query)
 builder.add_node("nwc_query_generator", generate_nwc_query)
 builder.add_node("nwc_analyze", nwc_analyze)
+builder.add_node("nwc_generate_viz", generate_nwc_viz)
 builder.add_node("nwc_show_forecast", nwc_show_forecast)
 builder.add_node("execute_format", execute_and_format)
 builder.add_node("generate_viz", generate_viz)
@@ -126,6 +127,7 @@ builder.add_conditional_edges(
         "GENERATE_NWC_SQL": "nwc_query_generator",
         "NWC_ANALYZE": "nwc_analyze",
         "NWC_SHOW_FORECAST": "nwc_show_forecast",
+        "NWC_GENERATE_VIZ": "nwc_generate_viz",
         "EXECUTE_SQL": "execute_format",
         "GENERATE_VIZ": "generate_viz",
         "TRAIN_MODEL": "call_nwc_train",
@@ -141,6 +143,7 @@ builder.add_conditional_edges(
 builder.add_edge("generate_query", "next_step")
 builder.add_edge("nwc_query_generator", "next_step")
 builder.add_edge("nwc_analyze", "next_step")
+builder.add_edge("nwc_generate_viz", "next_step")
 builder.add_edge("nwc_show_forecast", "next_step")
 builder.add_edge("execute_format", "next_step")
 builder.add_edge("generate_viz", "next_step")
@@ -157,6 +160,7 @@ memory = MemorySaver()
 
 # Compile with checkpointer
 graph = builder.compile(checkpointer=memory)
+
 
 def run_agent(query: str, owner_id: str, auth_token: str = None, files: List[dict] = None, thread_id: str = None, history: List[str] = None):
     """
@@ -225,7 +229,9 @@ def run_agent(query: str, owner_id: str, auth_token: str = None, files: List[dic
         # Handle History
         # If explicit history provided (Stateless/Temporary mode), use it + query
         if history is not None:
-             inputs["chat_history"] = history + [query]
+             # Normalise any legacy string entries and append new user message
+             normalised = [{"role": "user", "content": h} if isinstance(h, str) else h for h in history]
+             inputs["chat_history"] = normalised + [{"role": "user", "content": query}]
              # Indicate this is a temporary/stateless session: skip confirmation
              inputs["temporary_session"] = True
         # Otherwise, rely on MemorySaver state if thread_id exists
@@ -233,12 +239,13 @@ def run_agent(query: str, owner_id: str, auth_token: str = None, files: List[dic
              current_state = graph.get_state(config)
              if current_state and current_state.values:
                   current_history = current_state.values.get("chat_history", [])
-                  new_history = current_history + [query]
-                  inputs["chat_history"] = new_history
+                  # Normalise any legacy string entries to role/content dicts
+                  current_history = [{"role": "user", "content": h} if isinstance(h, str) else h for h in current_history]
+                  inputs["chat_history"] = current_history + [{"role": "user", "content": query}]
              else:
-                  inputs["chat_history"] = [query]
+                  inputs["chat_history"] = [{"role": "user", "content": query}]
         else:
-             inputs["chat_history"] = [query]
+             inputs["chat_history"] = [{"role": "user", "content": query}]
 
         # If this is a temporary/stateless session, run full graph immediately
         if inputs.get("temporary_session"):

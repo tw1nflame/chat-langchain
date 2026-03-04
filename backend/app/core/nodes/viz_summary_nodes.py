@@ -168,7 +168,9 @@ def generate_summary(state: dict):
         # Clean up code blocks if any
         if summary.startswith("```"):
             summary = summary.strip("`")
-        return {"result": summary}
+        # Append assistant response to chat_history so MemorySaver persists the full conversation
+        updated_history = history + [{"role": "assistant", "content": summary}]
+        return {"result": summary, "chat_history": updated_history}
     except Exception as e:
         app_logger.error(f"Summary Error: {e}")
         return {"result": "Data retrieved successfully."}

@@ -10,18 +10,22 @@ from core.nodes.shared_resources import llm, strip_think_tags
 app_logger = logging.getLogger("uvicorn")
 
 target_model_template = """You are an expert assistant for identifying target models from a configuration.
-Given the User Query and the NWC Configuration (which maps articles to their target models/pipelines), identify which article the user is referring to and extract its target model and pipeline.
+Given the User Query, the recent conversation History, and the NWC Configuration (which maps articles to their target models/pipelines), identify which article the user is referring to and extract its target model and pipeline.
 
 NWC Configuration:
 {nwc_config}
 
+History (recent messages for context):
+{history}
+
 User Query: {question}
 
 Instructions:
-1. Find the article in the configuration that best matches the article mentioned in the User Query.
-2. Extract the 'model' and 'pipeline' for that article.
-3. Return the result in valid JSON format with keys: "article", "model", "pipeline".
-4. If the article is not found or ambiguous, return {{"article": null, "model": null, "pipeline": null}}.
+1. If the User Query is ambiguous (e.g. "по этой статье", "what about this one"), use the History to determine which article was last discussed.
+2. Find the article in the configuration that best matches the identified article.
+3. Extract the 'model' and 'pipeline' for that article.
+4. Return the result in valid JSON format with keys: "article", "model", "pipeline".
+5. If the article is not found or still ambiguous even with History, return {{"article": null, "model": null, "pipeline": null}}.
 
 Output ONLY JSON.
 """
@@ -61,7 +65,9 @@ def target_model_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     question = state.get("question", "")
     auth_token = state.get("auth_token")
-    
+    history = state.get("chat_history", [])
+    history_str = json.dumps(history[-5:], ensure_ascii=False) if history else "[]"
+
     app_logger.info(f"target_model_node: processing question '{question}'")
     
     # 1. Fetch Config
@@ -76,7 +82,8 @@ def target_model_node(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         response = chain.invoke({
             "nwc_config": config_str,
-            "question": question
+            "question": question,
+            "history": history_str
         })
         content = strip_think_tags(response.content)
         # Clean up markdown code blocks if present

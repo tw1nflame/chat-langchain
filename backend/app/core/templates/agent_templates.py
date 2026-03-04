@@ -209,21 +209,20 @@ Available Actions:
   - Only use UPDATE_RAG if the user wants to ADD the file to the system.
 - RETRIEVE_RAG: Search the knowledge base (vector store) for information.
   - Use when the user asks a question that might be in the uploaded documents.
-  - Use when the user asks for definitions, examples, or explanations of terms (e.g. liquidity ratios, KPIs), that are likely in the knowledge base.
+  - Use when the user asks for definitions, examples, or explanations of terms (e.g. liquidity ratios, KPIs, model descriptions), that are likely in the knowledge base.
+  - **IMPORTANT**: Use RETRIEVE_RAG when the user asks for a *description* or *explanation* of a model, algorithm, or concept — even if the model name was mentioned in a previous turn (e.g. "расскажи про эту модель", "что такое tabpfnmix", "объясни модель", "как работает эта модель"). These are knowledge questions, NOT config lookups.
   - DO NOT use this if the question is about specific financial articles (NWC, debt) - use GENERATE_NWC_SQL instead. Use GENERATE_SQL for Taxes.
-  - Keywords: "search", "find", "what is", "tell me about", "examples", "definitions", "concepts", "explanations", "поиск", "найди", "что написано в", "concerning", "примеры", "определения", "понятия", "какие есть".
+  - Keywords: "search", "find", "what is", "tell me about", "examples", "definitions", "concepts", "explanations", "поиск", "найди", "что написано в", "concerning", "примеры", "определения", "понятия", "какие есть", "расскажи", "расскажи про", "объясни", "что такое", "как работает", "опиши".
   - CRITICAL: When you use RETRIEVE_RAG, the subsequent SUMMARIZE step MUST NOT invent or add facts not present in the retrieved content. Only summarize/paraphrase the RAG results. If the retrieved content is incomplete or ambiguous, explicitly state that and request clarification.
   - If the question is NOT about SQL/Data but about general knowledge or document content, use this.
 - NWC_ANALYZE: Analyze forecast for a single article (EXCLUDING Taxes/Налоги). Use when the user explicitly asks something like "Проанализируй прогноз на <название статьи>" or "проанализируй прогноз по статье <название>".
   - NOTE: If the article is "Налоги" (Taxes), use GENERATE_SQL instead.
   - The node should extract the article name (must be one of the configured `default_articles` / keys under `model_article`), look up the target `model` and `pipeline` in the NWC config, and generate a SQL query that returns the latest 13 rows from `results_data` for that article/pipeline and model (including `abs_deviation` and `rel_deviation`). Return ONLY the SQL query.
-  - VISUALIZATION RULE: If the user's question is an analysis request (contains words like "проанализируй","проанализировать","проанализируй прогноз","сравни","проанализируй прогноз по"), the planner SHOULD include a `GENERATE_VIZ` step immediately after `EXECUTE_SQL` in the plan to build a time-series visualization with the following requirements:
-    - X Axis: `date` (temporal)
-    - Y Axis: overlayed lines for `fact` and `abs_deviation` (or `forecast_value` if preferred). If `rel_deviation` is present, include it in the tooltip.
-    - Mark: "line" with visible points (use `point` encoding for clarity)
-    - Tooltip must include: `date` (localized), `fact` (Факт), `forecast_value` (Прогноз), `abs_deviation` (Отклонение), `rel_deviation` (Отклонение %), `pipeline` (Модель)
-    - Use `width: "container"` and `height: 300` and translate axis/tooltip titles into Russian.
-    - If the user explicitly asked for a deviation chart ("график отклонений"), follow the deviation-chart rules in the visualization template (scatter with thresholds); otherwise use the time series described above.
+  - VISUALIZATION RULE: If the user's question is an analysis request (contains words like "проанализируй","проанализировать","проанализируй прогноз","сравни","проанализируй прогноз по"), the planner MUST include a `NWC_GENERATE_VIZ` step (NOT `GENERATE_VIZ`) immediately after `EXECUTE_SQL` in the plan. `NWC_GENERATE_VIZ` builds the time-series visualization from a pre-defined template without calling the LLM:
+    - Two overlaid lines: `fact` (blue solid) and `forecast_value` (orange dashed)
+    - X Axis: `date` (temporal), Y Axis: value in млн. руб.
+    - Tooltip includes: `date`, `fact`, `forecast_value`, `abs_deviation`, `rel_deviation`
+    - If the user explicitly asked for a deviation chart ("график отклонений"), use `GENERATE_VIZ` instead (LLM-generated scatter with thresholds) since `NWC_GENERATE_VIZ` only covers the standard time-series template.
 - NWC_SHOW_FORECAST: Show forecast for multiple articles or all articles (EXCLUDING Taxes/Налоги). Use when the user asks e.g. "выведи прогноз по всем статьям на декабрь 2025" or "выведи прогноз по статьям X, Y".
   - CRITICAL: Do NOT use this for "Налоги" (Taxes) or if the requested article is "Налоги". For Taxes, ALWAYS use GENERATE_SQL.
   - The node should extract the list of articles (array) or 'ALL' from the user's request, optional model (applies to all), optional pipeline, and optional date.
@@ -233,9 +232,10 @@ Available Actions:
     - If the date is not specified, determine the latest available date across the selected article/model/pipeline combos and use it for filtering.
     - Construct a SQL that returns one row per article for the chosen date with columns: date, article, fact, forecast_value, pipeline.
   - Example plan: [ {{ "action": "NWC_SHOW_FORECAST" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "SUMMARIZE" }} ]
-- EXTRACT_TARGET_MODEL: Extract the target model and pipeline from the NWC configuration for a specific article mentioned in the query. 
-  - Use this when the user asks "Which model is the target for...", "What is the target article for...", "Какая целевая статья...", or "По какой модели считается...".
-  - This node loads the config and uses LLM to extract the information.
+- EXTRACT_TARGET_MODEL: Extract the target model and pipeline from the NWC configuration for a specific article mentioned in the query.
+  - Use this ONLY when the user asks which model/pipeline is *configured* for a given article: "Which model is the target for...", "Какая целевая модель по статье...", "По какой модели считается...", "What pipeline is used for...".
+  - **DO NOT** use this when the user asks for a *description*, *explanation*, or *details* about a model (e.g. "расскажи про эту модель", "что такое tabpfnmix", "как работает эта модель"). For those questions use RETRIEVE_RAG.
+  - This node loads the NWC config and uses the chat history to resolve ambiguous references (e.g. "по этой статье").
 - TRAIN_MODEL: Call the external NWC service. Use this ONLY if the user explicitly asks to "start", "run", "launch", "train" a forecast/model. 
   - DO NOT use this for "update RAG" or document processing.
   - DO NOT use this if the question is "обнови rag".
@@ -270,7 +270,7 @@ Rules:
 Valid Plans (Examples):
 - [{{ "action": "GENERATE_SQL" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "GENERATE_NWC_SQL" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "GENERATE_VIZ" }}, {{ "action": "SUMMARIZE" }}]
-- [{{ "action": "NWC_ANALYZE" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "GENERATE_VIZ" }}, {{ "action": "SUMMARIZE" }}]
+- [{{ "action": "NWC_ANALYZE" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "NWC_GENERATE_VIZ" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "TRAIN_MODEL" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "UPDATE_RAG" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "RETRIEVE_RAG" }}, {{ "action": "SUMMARIZE" }}]
