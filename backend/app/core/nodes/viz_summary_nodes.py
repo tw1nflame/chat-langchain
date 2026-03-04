@@ -120,23 +120,6 @@ def generate_summary(state: dict):
     else:
         data_preview = "No data rows available."
 
-    # Simple heuristic to avoid LLM call if error or empty
-    if not tables and not charts:
-        # query is None means a non-SQL node ran (e.g. update_rag, call_nwc_train) and already
-        # set `result` in state. Just pass it through — no LLM needed.
-        if query is None:
-            res = state.get("result")
-            return {"result": res if res else "No data found."}
-
-        # query == "NO_SQL" means planner decided no data retrieval; use LLM for greeting / clarification.
-        is_no_sql = (query == "NO_SQL")
-
-        if not is_no_sql:
-             # We had a query, but no tables/charts. Rely on previous result message.
-             res = state.get("result")
-             # Ensure we don't return None
-             return {"result": res if res else "No data found."}
-
     summary_chain = summary_prompt | llm
 
     history = state.get("chat_history", [])
