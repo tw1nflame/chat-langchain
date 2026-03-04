@@ -193,7 +193,8 @@ def update_rag_node(state: Dict[str, Any]):
     try:
         app_logger.info(f"Adding {len(documents)} chunks to Vector Store...")
         vector_store.add_documents(documents)
-        return {"result": f"Added {len(processed_files)} files ({len(documents)} chunks)."}
+        files_str = ", ".join(processed_files)
+        return {"result": f"Файл(ы) успешно добавлены в базу знаний: {files_str} ({len(documents)} фрагментов)."}
         
     except Exception as e:
         return {"result": f"Vector Store Error: {str(e)}"}

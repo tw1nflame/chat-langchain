@@ -1,7 +1,7 @@
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as rest
-from langchain_community.embeddings import OllamaEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from core.config import settings
 import logging
 
@@ -18,12 +18,17 @@ if hasattr(QdrantVectorStore, "_validate_collection_config"):
 
 def get_embeddings():
     """
-    Returns the configured embedding model. 
-    Using OllamaEmbeddings for generic Ollama/Xinference compatibility.
+    Returns the configured embedding model.
+    Uses OpenAIEmbeddings with a custom base_url for OpenAI-compatible services
+    (Xinference, Ollama /v1, vLLM, LiteLLM, etc.).
+    Set EMBEDDING_BASE_URL to your service's /v1 endpoint,
+    EMBEDDING_MODEL to the model name, and EMBEDDING_API_KEY to any non-empty string.
     """
-    return OllamaEmbeddings(
+    return OpenAIEmbeddings(
         base_url=settings.embedding_base_url,
-        model=settings.embedding_model
+        model=settings.embedding_model,
+        api_key=settings.embedding_api_key,
+        check_embedding_ctx_length=False,
     )
 
 def init_vector_store():

@@ -39,9 +39,10 @@ class Settings(BaseSettings):
     qdrant_path: str = "./qdrant_data"  # Path for local persistence
     qdrant_collection_name: str = "documents"
     
-    # Text Embeddings (Ollama/Xinference)
-    embedding_base_url: str = "http://localhost:11434"
+    # Text Embeddings (OpenAI-compatible: Ollama, Xinference, vLLM, etc.)
+    embedding_base_url: str = "http://localhost:11434/v1"
     embedding_model: str = "nomic-embed-text"
+    embedding_api_key: str = "dummy"  # Xinference/Ollama не проверяют ключ, но он обязателен для OpenAI SDK
     
     # Feature Flags
     enable_rag_update: bool = True
