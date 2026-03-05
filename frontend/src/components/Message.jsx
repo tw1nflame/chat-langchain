@@ -252,11 +252,29 @@ function Message({ message, chatId, onConfirm }) {
                         <tbody>
                             {table.rows.map((row, rowIdx) => (
                                 <tr key={rowIdx} className="bg-white border-b hover:bg-gray-50">
-                                    {row.map((cell, cellIdx) => (
-                                        <td key={cellIdx} className="px-4 py-2 border-r last:border-r-0 border-gray-200 whitespace-nowrap">
-                                            {typeof cell === 'object' ? JSON.stringify(cell) : String(cell)}
-                                        </td>
-                                    ))}
+                                    {row.map((cell, cellIdx) => {
+                                        const header = table.headers[cellIdx];
+                                        let displayValue;
+                                        if (cell === null || cell === undefined) {
+                                            displayValue = '';
+                                        } else if (typeof cell === 'object') {
+                                            displayValue = JSON.stringify(cell);
+                                        } else if (typeof cell === 'number' || (typeof cell === 'string' && cell !== '' && !isNaN(Number(cell)))) {
+                                            const num = Number(cell);
+                                            if (header === 'rel_deviation') {
+                                                displayValue = (num * 100).toFixed(2) + '%';
+                                            } else {
+                                                displayValue = num.toFixed(2);
+                                            }
+                                        } else {
+                                            displayValue = String(cell);
+                                        }
+                                        return (
+                                            <td key={cellIdx} className="px-4 py-2 border-r last:border-r-0 border-gray-200 whitespace-nowrap">
+                                                {displayValue}
+                                            </td>
+                                        );
+                                    })}
                                 </tr>
                             ))}
                         </tbody>
