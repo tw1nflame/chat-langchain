@@ -240,7 +240,9 @@ def nwc_analyze(state: Dict[str, Any]):
 
     config = fetch_nwc_config(auth_token)
     model_article = config.get("model_article", {})
-    default_articles = config.get("default_articles") or list(model_article.keys())
+    # Use keys from "Статья" section as the canonical article list; fall back to model_article keys
+    statya_keys = list(config.get("Статья", {}).keys())
+    valid_articles = statya_keys if statya_keys else list(model_article.keys())
 
     if not model_article:
         app_logger.warning("nwc_analyze: model_article config is empty or unavailable")
@@ -250,12 +252,26 @@ def nwc_analyze(state: Dict[str, Any]):
     extraction_prompt = f"""
     Extract the target article, optional model, and optional date from the user's request for NWC analysis.
 
-    Valid article names (must match one of these exactly): {json.dumps(default_articles, ensure_ascii=False)}
+    Valid article names (canonical, nominative case):
+    {json.dumps(valid_articles, ensure_ascii=False)}
+
+    IMPORTANT: The user may mention an article in any Russian grammatical case (genitive, dative, accusative, etc.).
+    You MUST recognize declined forms and map them to the canonical nominative name from the list above.
+    Examples of declined forms → canonical name:
+      "торговой КЗ" → "Торговая КЗ"
+      "торговой ДЗ" → "Торговая ДЗ"
+      "прочей ДЗ" → "Прочая ДЗ"
+      "авансов выданных" → "Авансы выданные и расходы будущих периодов"
+      "задолженности перед персоналом" → "Задолженность перед персоналом"
+      "торговой кредиторской задолженности" → "Торговая КЗ"
+      "торговой дебиторской задолженности" → "Торговая ДЗ"
+    Do NOT return "MISSING" just because the form is declined — always try to find the best match.
+    Return "MISSING" only if you genuinely cannot identify which article is meant.
 
     User message: "{question}"
 
     Return ONLY JSON with the following keys:
-      - article: the exact article name from the list above, or "MISSING" if no valid article is present.
+      - article: the exact canonical article name from the list above, or "MISSING" if no valid article can be identified.
       - model: optional model string (e.g., "stacking_rfr"), or null if not specified.
       - date: optional target date in ISO format (YYYY-MM-DD). If the user mentions only a month/year, return the date as the LAST day of that month (YYYY-MM-DD). Return null if not specified.
       - pipeline: optional pipeline string (e.g., "base" or "base+"), or null if not specified. If provided, it should be used as-is (case-insensitive). If missing, the node will use the pipeline from config or default to "base".
@@ -289,7 +305,7 @@ def nwc_analyze(state: Dict[str, Any]):
 
     # Validate article
     if not article or article == "MISSING" or article not in model_article:
-        sample = ", ".join(default_articles[:12])
+        sample = ", ".join(valid_articles[:12])
         return {"result": f"Пожалуйста, уточните статью для анализа. Возможные варианты: {sample}..."}
 
     details = model_article.get(article, {})
