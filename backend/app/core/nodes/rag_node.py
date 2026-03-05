@@ -113,6 +113,14 @@ def split_markdown_with_tables(text: str, chunk_size: int, chunk_overlap: int):
     return final_chunks
 
 def update_rag_node(state: Dict[str, Any]):
+    """Обработать прикреплённые документы (.docx/.pdf) и добавить их содержимое в базу знаний (RAG/векторное хранилище).
+
+    - Inputs: state['files'] — список загруженных файлов с путями.
+    - Outputs: state['result'] — текстовый отчёт об обработанных файлах.
+    - Side effects: записывает чанки документов в векторное хранилище Qdrant.
+    - Notes for plan confirmation: этот шаг извлекает текст из прикреплённых файлов и сохраняет его
+      в базу знаний, чтобы агент мог использовать эти данные в будущих запросах.
+    """
     app_logger.info("update_rag_node: processing")
 
     if not settings.enable_rag_update:
