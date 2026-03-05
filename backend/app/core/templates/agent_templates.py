@@ -171,6 +171,15 @@ if "Previous Step Result" indicates an action was performed:
    - Example: "Файл models.docx успешно добавлен в базу знаний (25 фрагментов). Теперь агент сможет использовать эти данные при ответах на вопросы."
    - STOP here.
 
+5. IF "Previous Step Result" contains "Сравнение моделей по статье" (model comparison result):
+   - Present the comparison results to the user in clear Russian.
+   - Highlight: (a) which model is currently configured as the target and its rank; (b) which model performed BEST (rank #1) and its MAPE value (multiplied by 100 and shown as %).
+   - If the best model differs from the target, mention it explicitly and suggest considering it as a replacement.
+   - Mention the analysis period and article name.
+   - Keep it concise (3-5 sentences). Do NOT enumerate all models — just highlight top-3 and the target.
+   - The full ranking table is shown separately to the user.
+   - STOP here.
+
 If SQL Query was "NO_SQL" AND "Previous Step Result" is empty/insignificant:
 - If the user's question was a data request (e.g. "compare", "show") but NO_SQL was returned:
   - ASK FOR CLARIFICATION in Russian about what specific data or article is needed.
@@ -238,6 +247,13 @@ Available Actions:
     - If the date is not specified, determine the latest available date across the selected article/model/pipeline combos and use it for filtering.
     - Construct a SQL that returns one row per article for the chosen date with columns: date, article, fact, forecast_value, pipeline.
   - Example plan: [ {{ "action": "NWC_SHOW_FORECAST" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "SUMMARIZE" }} ]
+- NWC_MODEL_SELECTION: Compare ALL available forecast models (both 'base' and 'base+' pipelines) for a specific NWC article and rank them by mean absolute relative deviation.
+  - Use when the user asks: "сравни модели по статье X", "какая модель лучше для X", "какая лучшая модель по X", "сравнение моделей", "model comparison", "который прогноз точнее", etc.
+  - The node extracts the article name and optional analysis period (default: 12 months; supports e.g. "за 6 месяцев", "за 2 года").
+  - It scans ALL predict_* columns across both pipelines, computing mean(abs(rel_deviation)) only for rows where fact IS NOT NULL.
+  - Results are sorted ascending (best model first). The currently configured target model is highlighted.
+  - This node does its own DB queries — do NOT add EXECUTE_SQL before or after it.
+  - Example plan: [ {{ "action": "NWC_MODEL_SELECTION" }}, {{ "action": "SUMMARIZE" }} ]
 - EXTRACT_TARGET_MODEL: Extract the target model and pipeline from the NWC configuration for a specific article mentioned in the query.
   - Use this ONLY when the user asks which model/pipeline is *configured* for a given article: "Which model is the target for...", "Какая целевая модель по статье...", "По какой модели считается...", "What pipeline is used for...".
   - **DO NOT** use this when the user asks for a *description*, *explanation*, or *details* about a model (e.g. "расскажи про эту модель", "что такое tabpfnmix", "как работает эта модель"). For those questions use RETRIEVE_RAG.
@@ -277,6 +293,7 @@ Valid Plans (Examples):
 - [{{ "action": "GENERATE_SQL" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "GENERATE_NWC_SQL" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "GENERATE_VIZ" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "NWC_ANALYZE" }}, {{ "action": "EXECUTE_SQL" }}, {{ "action": "NWC_GENERATE_VIZ" }}, {{ "action": "SUMMARIZE" }}]
+- [{{ "action": "NWC_MODEL_SELECTION" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "TRAIN_MODEL" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "UPDATE_RAG" }}, {{ "action": "SUMMARIZE" }}]
 - [{{ "action": "RETRIEVE_RAG" }}, {{ "action": "SUMMARIZE" }}]

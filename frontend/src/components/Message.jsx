@@ -261,7 +261,7 @@ function Message({ message, chatId, onConfirm }) {
                                             displayValue = JSON.stringify(cell);
                                         } else if (typeof cell === 'number' || (typeof cell === 'string' && cell !== '' && !isNaN(Number(cell)))) {
                                             const num = Number(cell);
-                                            if (header === 'rel_deviation') {
+                                            if (header === 'rel_deviation' || header === 'mean_abs_rel_deviation') {
                                                 displayValue = (num * 100).toFixed(2) + '%';
                                             } else {
                                                 displayValue = num.toFixed(2);

@@ -1,10 +1,13 @@
 from typing import Any, Dict, List, Optional
+import calendar
 import httpx
 import json
+import math
 import re
 import logging
 import yaml
-from sqlalchemy import text
+from datetime import date as _date
+from sqlalchemy import text, inspect as sa_inspect
 from langchain_core.prompts import PromptTemplate
 from core.config import settings
 from core.nodes.shared_resources import llm, engine, db, create_sql_chain, strip_think_tags
@@ -704,3 +707,262 @@ ORDER BY article;"""
 
     return {"query": query, "nwc_info": {"articles": articles, "models": model_map, "pipelines": pipeline_map, "target_date": target_date, "model_source": model_source}}
 
+
+# ---------------------------------------------------------------------------
+# Helper: subtract N calendar months from a date
+# ---------------------------------------------------------------------------
+def _subtract_months(d: _date, months: int) -> _date:
+    """Return d minus `months` calendar months, clamped to end-of-month if needed."""
+    total_months = d.month - 1 - months
+    year = d.year + total_months // 12
+    month = total_months % 12 + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
+    return d.replace(year=year, month=month, day=day)
+
+
+def article_model_selection(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Сравнить все доступные модели (оба пайплайна: base и base+) для указанной статьи NWC по метрике mean(abs(rel_deviation)) за заданный период.
+
+    Description for planner/LLM summary:
+    - Purpose: for the given NWC article, query ALL predict_* columns in `results_data` across
+      both 'base' and 'base+' pipelines. Only rows where `fact IS NOT NULL` are included.
+      Computes mean(abs((fact - predict_X) / fact)) per (model, pipeline), sorts ascending,
+      and reports the best model alongside the currently configured target model.
+    - Inputs:
+      - state["question"]: user request specifying the article and optional analysis period
+        (e.g. "за последний год", "за 6 месяцев", "за 2 года"). Default period: 12 months.
+      - state["auth_token"]: token to fetch NWC configuration (current target model per article).
+    - Outputs:
+      - {"tables": [<ranking table>], "result": <text summary>, "nwc_info": {...}} — no EXECUTE_SQL needed.
+    - Side effects: issues direct SQL queries to the agent DB (read-only).
+    - Notes for plan confirmation: the agent will scan ALL models in both pipelines for the requested
+      article over the specified period and rank them by average absolute relative deviation.
+      The currently configured target model and the best-performing model will be highlighted.
+    """
+    question = state.get("question", "")
+    auth_token = state.get("auth_token")
+
+    app_logger.info(f"article_model_selection: processing question='{question[:160]}'")
+
+    # --- 1. Fetch NWC config ------------------------------------------------
+    config = fetch_nwc_config(auth_token)
+    model_article = config.get("model_article", {})
+    statya_keys = list(config.get("Статья", {}).keys())
+    valid_articles = statya_keys if statya_keys else list(model_article.keys())
+
+    if not model_article:
+        return {"result": "Не удалось получить конфигурацию NWC. Пожалуйста, попробуйте позже."}
+
+    # --- 2. Extract article + period via LLM --------------------------------
+    extraction_prompt = f"""
+Extract the NWC article name and the analysis period (in months) from the user's request.
+
+Valid article names (canonical nominative forms):
+{json.dumps(valid_articles, ensure_ascii=False)}
+
+The user may mention the article in any grammatical case. Map declined forms to the canonical name.
+Examples: "торговой ДЗ" → "Торговая ДЗ", "торговой КЗ" → "Торговая КЗ".
+Return "MISSING" only if the article genuinely cannot be identified.
+
+For the period:
+- "за последний год" / "за год" → 12
+- "за N месяцев" → N
+- "за N года" / "за N лет" → N * 12
+- not specified → 12 (default)
+
+User message: "{question}"
+
+Return ONLY JSON:
+  - "article": canonical name from the list above, or "MISSING"
+  - "months": integer number of months (default 12)
+
+Example: {{"article": "Торговая ДЗ", "months": 12}}
+"""
+
+    try:
+        app_logger.info("article_model_selection: invoking LLM for parameter extraction")
+        resp = llm.invoke(extraction_prompt)
+        content = strip_think_tags(resp.content)
+        app_logger.info(f"article_model_selection: LLM raw response: {content}")
+        m = re.search(r"```json(.*?)```", content, re.DOTALL | re.IGNORECASE)
+        if m:
+            content = m.group(1).strip()
+        elif content.startswith("``"):
+            content = content.strip("`")
+        params = json.loads(content)
+    except Exception as e:
+        app_logger.error(f"article_model_selection: LLM extraction failed: {e}")
+        return {"result": "Не удалось распознать статью. Укажите, например: 'Сравни модели по Торговой ДЗ'."}
+
+    article = params.get("article") if isinstance(params, dict) else None
+    analysis_months = int(params.get("months") or 12)
+    if analysis_months <= 0:
+        analysis_months = 12
+
+    if not article or article == "MISSING" or article not in model_article:
+        sample = ", ".join(valid_articles[:12])
+        return {"result": f"Пожалуйста, уточните статью для сравнения моделей. Возможные варианты: {sample}..."}
+
+    # DB article name mapping
+    db_article = "Торговая ДЗ_USD" if article == "Торговая ДЗ" else article
+
+    # --- 3. Get all predict_* column names from DB schema -------------------
+    try:
+        inspector = sa_inspect(engine)
+        columns_info = inspector.get_columns("results_data")
+        all_col_names = [c["name"] for c in columns_info]
+    except Exception as e:
+        app_logger.error(f"article_model_selection: schema inspection failed: {e}")
+        return {"result": "Не удалось получить схему таблицы results_data. Попробуйте позже."}
+
+    predict_cols = [(c, c[len("predict_"):]) for c in all_col_names if c.startswith("predict_")]
+    if not predict_cols:
+        return {"result": "В таблице results_data не найдено столбцов с прогнозами (predict_*)."}
+
+    # --- 4. Find reference date (latest date with fact for this article) ----
+    try:
+        with engine.connect() as conn:
+            res = conn.execute(
+                text("SELECT MAX(date) FROM results_data WHERE article = :article AND fact IS NOT NULL"),
+                {"article": db_article}
+            ).fetchone()
+            ref_date_raw = res[0] if res else None
+    except Exception as e:
+        app_logger.error(f"article_model_selection: DB error fetching ref date: {e}")
+        return {"result": "Ошибка при обращении к базе данных. Попробуйте позже."}
+
+    if not ref_date_raw:
+        return {"result": f"В базе нет фактических данных для статьи '{article}'."}
+
+    # Normalize to datetime.date
+    if hasattr(ref_date_raw, "date"):
+        ref_date: _date = ref_date_raw.date()
+    elif isinstance(ref_date_raw, _date):
+        ref_date = ref_date_raw
+    else:
+        ref_date = _date.fromisoformat(str(ref_date_raw)[:10])
+
+    start_date = _subtract_months(ref_date, analysis_months)
+    ref_date_str = ref_date.isoformat()
+    start_date_str = start_date.isoformat()
+
+    app_logger.info(
+        f"article_model_selection: article='{article}', period={analysis_months}m, "
+        f"ref_date={ref_date_str} (last date with fact), start_date={start_date_str}, predict_cols={len(predict_cols)}"
+    )
+
+    # --- 5. Build a UNION ALL query for all (model, pipeline) combos --------
+    pipelines = ["base", "base+"]
+    union_parts = []
+    for col, model_name in predict_cols:
+        # Sanitize model name for SQL literal (col name already came from inspector, safe)
+        safe_model_name = model_name.replace("'", "''")
+        for pl in pipelines:
+            safe_pl = pl.replace("'", "''")
+            union_parts.append(
+                f"SELECT '{safe_pl}' AS pipeline, '{safe_model_name}' AS model,\n"
+                f"       AVG(ABS((fact - {col}) / NULLIF(ABS(fact), 0))) AS mean_abs_rel_dev,\n"
+                f"       COUNT(DISTINCT date) AS n_months\n"
+                f"FROM results_data\n"
+                f"WHERE article = :article AND pipeline = '{safe_pl}'\n"
+                f"  AND fact IS NOT NULL AND {col} IS NOT NULL\n"
+                f"  AND fact != 0\n"
+                f"  AND date > :start_date AND date <= :ref_date"
+            )
+
+    full_query = "\nUNION ALL\n".join(union_parts)
+
+    try:
+        with engine.connect() as conn:
+            rows_raw = conn.execute(
+                text(full_query),
+                {"article": db_article, "start_date": start_date_str, "ref_date": ref_date_str}
+            ).fetchall()
+    except Exception as e:
+        app_logger.error(f"article_model_selection: DB error computing metrics: {e}")
+        return {"result": f"Ошибка при вычислении метрик: {e}"}
+
+    # Filter out rows with no data, zero months, or non-finite values (NaN/Inf from division edge-cases)
+    results = []
+    for r in rows_raw:
+        if r[2] is None or int(r[3]) <= 0:
+            continue
+        val = float(r[2])
+        if not math.isfinite(val):
+            app_logger.debug(f"article_model_selection: skipping non-finite value model={r[1]} pipeline={r[0]} val={val}")
+            continue
+        results.append({"pipeline": r[0], "model": r[1], "mean_abs_rel_dev": val, "n_months": int(r[3])})
+
+    if not results:
+        return {"result": f"Нет данных с фактом для статьи '{article}' за указанный период ({analysis_months} мес.)."}
+
+    # Sort ascending by mean absolute relative deviation
+    results.sort(key=lambda x: x["mean_abs_rel_dev"])
+
+    # --- 6. Get configured target model -------------------------------------
+    target_config = model_article.get(article, {})
+    target_model = target_config.get("model")
+    target_pipeline = (target_config.get("pipeline") or "base").lower()
+
+    # --- 7. Build output table ----------------------------------------------
+    headers = ["pipeline", "model", "mean_abs_rel_deviation", "n_months_with_fact"]
+    table_rows = [
+        [r["pipeline"], r["model"], round(r["mean_abs_rel_dev"], 6), r["n_months"]]
+        for r in results
+    ]
+
+    best = results[0]
+    worst = results[-1]
+
+    # Check if target model is in results
+    target_entry = next(
+        (r for r in results if r["model"] == target_model and r["pipeline"] == target_pipeline),
+        None
+    )
+    target_rank = results.index(target_entry) + 1 if target_entry else None
+
+    # --- 8. Build result text for SUMMARIZE ---------------------------------
+    period_label = f"{analysis_months} мес." if analysis_months != 12 else "последний год (12 мес.)"
+    summary_lines = [
+        f"Сравнение моделей по статье '{article}' за {period_label} (до {ref_date_str}).",
+        f"Всего протестировано комбинаций: {len(results)} (модели × пайплайны base/base+).",
+        f"",
+        f"Текущая целевая модель: {target_model} / пайплайн '{target_pipeline}'"
+        + (f" — занимает место #{target_rank} из {len(results)} (MAPE={target_entry['mean_abs_rel_dev']:.4f})" if target_entry else " — нет данных за период"),
+        f"",
+        f"Лучшая модель: {best['model']} / пайплайн '{best['pipeline']}' (MAPE={best['mean_abs_rel_dev']:.4f}, факт за {best['n_months']} мес.)",
+        f"Худшая модель: {worst['model']} / пайплайн '{worst['pipeline']}' (MAPE={worst['mean_abs_rel_dev']:.4f})",
+    ]
+
+    if target_entry and target_rank and target_rank > 1:
+        better = results[:target_rank - 1]
+        better_str = "; ".join(f"{r['model']} ({r['pipeline']})" for r in better[:3])
+        if target_rank - 1 > 3:
+            better_str += f" и ещё {target_rank - 4}"
+        summary_lines.append(f"")
+        summary_lines.append(f"Модели лучше целевой: {better_str}.")
+    elif target_entry and target_rank == 1:
+        summary_lines.append(f"Целевая модель является наилучшей за данный период.")
+
+    result_text = "\n".join(summary_lines)
+
+    app_logger.info(
+        f"article_model_selection: done. best={best['model']}/{best['pipeline']}, "
+        f"target={target_model}/{target_pipeline} rank={target_rank}/{len(results)}"
+    )
+
+    return {
+        "tables": [{
+            "title": f"Сравнение моделей: {article} ({period_label})",
+            "headers": headers,
+            "rows": table_rows,
+        }],
+        "result": result_text,
+        "nwc_info": {
+            "article": article,
+            "target_model": target_model,
+            "target_pipeline": target_pipeline,
+            "analysis_months": analysis_months,
+            "ref_date": ref_date_str,
+        },
+    }

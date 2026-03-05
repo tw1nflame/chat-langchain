@@ -6,7 +6,7 @@ from core.nodes.shared_resources import llm, strip_think_tags
 from core.nodes.sql_nodes import generate_query, execute_and_format
 from core.nodes.viz_summary_nodes import generate_viz, generate_summary
 from core.nodes.planner_node import planner
-from core.nodes.nwc_node import generate_nwc_query, nwc_analyze, nwc_show_forecast
+from core.nodes.nwc_node import generate_nwc_query, nwc_analyze, nwc_show_forecast, article_model_selection
 from core.nodes.nwc_train_node import call_nwc_train
 from core.nodes.rag_node import update_rag_node, retrieve_rag_node
 from langgraph.graph import END
@@ -20,6 +20,7 @@ ACTION_TO_FUNC = {
     "GENERATE_NWC_SQL": generate_nwc_query,
     "NWC_ANALYZE": nwc_analyze,
     "NWC_SHOW_FORECAST": nwc_show_forecast,
+    "NWC_MODEL_SELECTION": article_model_selection,
     "TRAIN_MODEL": call_nwc_train,
     "UPDATE_RAG": update_rag_node,
     "RETRIEVE_RAG": retrieve_rag_node,

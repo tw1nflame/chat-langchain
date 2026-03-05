@@ -3,7 +3,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from core.logging_config import app_logger
 import json
-from core.nodes.nwc_node import generate_nwc_query, nwc_analyze, nwc_show_forecast, generate_nwc_viz
+from core.nodes.nwc_node import generate_nwc_query, nwc_analyze, nwc_show_forecast, generate_nwc_viz, article_model_selection
 from core.nodes.rag_node import update_rag_node, retrieve_rag_node
 from core.nodes.sql_nodes import generate_query, execute_and_format
 from core.nodes.planner_node import planner
@@ -92,6 +92,7 @@ builder.add_node("nwc_query_generator", generate_nwc_query)
 builder.add_node("nwc_analyze", nwc_analyze)
 builder.add_node("nwc_generate_viz", generate_nwc_viz)
 builder.add_node("nwc_show_forecast", nwc_show_forecast)
+builder.add_node("nwc_model_selection", article_model_selection)
 builder.add_node("execute_format", execute_and_format)
 builder.add_node("generate_viz", generate_viz)
 builder.add_node("call_nwc_train", call_nwc_train)
@@ -127,6 +128,7 @@ builder.add_conditional_edges(
         "GENERATE_NWC_SQL": "nwc_query_generator",
         "NWC_ANALYZE": "nwc_analyze",
         "NWC_SHOW_FORECAST": "nwc_show_forecast",
+        "NWC_MODEL_SELECTION": "nwc_model_selection",
         "NWC_GENERATE_VIZ": "nwc_generate_viz",
         "EXECUTE_SQL": "execute_format",
         "GENERATE_VIZ": "generate_viz",
@@ -145,6 +147,7 @@ builder.add_edge("nwc_query_generator", "next_step")
 builder.add_edge("nwc_analyze", "next_step")
 builder.add_edge("nwc_generate_viz", "next_step")
 builder.add_edge("nwc_show_forecast", "next_step")
+builder.add_edge("nwc_model_selection", "next_step")
 builder.add_edge("execute_format", "next_step")
 builder.add_edge("generate_viz", "next_step")
 builder.add_edge("call_nwc_train", "next_step")
