@@ -811,15 +811,18 @@ Example: {{"article": "Торговая ДЗ", "months": 12}}
         inspector = sa_inspect(engine)
         columns_info = inspector.get_columns("results_data")
         all_col_names = [c["name"] for c in columns_info]
+        app_logger.info(f"article_model_selection: schema columns ({len(all_col_names)}): {all_col_names}")
     except Exception as e:
-        app_logger.error(f"article_model_selection: schema inspection failed: {e}")
+        app_logger.error(f"article_model_selection: schema inspection failed: {e}", exc_info=True)
         return {"result": "Не удалось получить схему таблицы results_data. Попробуйте позже."}
 
     predict_cols = [(c, c[len("predict_"):]) for c in all_col_names if c.startswith("predict_")]
+    app_logger.info(f"article_model_selection: predict_cols found ({len(predict_cols)}): {[c for c,_ in predict_cols]}")
     if not predict_cols:
         return {"result": "В таблице results_data не найдено столбцов с прогнозами (predict_*)."}
 
     # --- 4. Find reference date (latest date with fact for this article) ----
+    app_logger.info(f"article_model_selection: querying ref_date for db_article='{db_article}'")
     try:
         with engine.connect() as conn:
             res = conn.execute(
@@ -827,8 +830,9 @@ Example: {{"article": "Торговая ДЗ", "months": 12}}
                 {"article": db_article}
             ).fetchone()
             ref_date_raw = res[0] if res else None
+        app_logger.info(f"article_model_selection: ref_date_raw={ref_date_raw!r} (type={type(ref_date_raw).__name__})")
     except Exception as e:
-        app_logger.error(f"article_model_selection: DB error fetching ref date: {e}")
+        app_logger.error(f"article_model_selection: DB error fetching ref date: {e}", exc_info=True)
         return {"result": "Ошибка при обращении к базе данных. Попробуйте позже."}
 
     if not ref_date_raw:
@@ -857,6 +861,7 @@ Example: {{"article": "Торговая ДЗ", "months": 12}}
     for col, model_name in predict_cols:
         # Sanitize model name for SQL literal (col name already came from inspector, safe)
         safe_model_name = model_name.replace("'", "''")
+        safe_article = db_article.replace("'", "''")
         for pl in pipelines:
             safe_pl = pl.replace("'", "''")
             union_parts.append(
@@ -864,22 +869,27 @@ Example: {{"article": "Торговая ДЗ", "months": 12}}
                 f"       AVG(ABS((fact - {col}) / NULLIF(ABS(fact), 0))) AS mean_abs_rel_dev,\n"
                 f"       COUNT(DISTINCT date) AS n_months\n"
                 f"FROM results_data\n"
-                f"WHERE article = :article AND pipeline = '{safe_pl}'\n"
+                f"WHERE article = '{safe_article}' AND pipeline = '{safe_pl}'\n"
                 f"  AND fact IS NOT NULL AND {col} IS NOT NULL\n"
                 f"  AND fact != 0\n"
-                f"  AND date > :start_date AND date <= :ref_date"
+                f"  AND date > '{start_date_str}' AND date <= '{ref_date_str}'"
             )
 
     full_query = "\nUNION ALL\n".join(union_parts)
+    app_logger.info(f"article_model_selection: built UNION ALL query with {len(union_parts)} parts, total len={len(full_query)}")
+    app_logger.debug(f"article_model_selection: first UNION part:\n{union_parts[0] if union_parts else 'EMPTY'}")
 
     try:
         with engine.connect() as conn:
-            rows_raw = conn.execute(
-                text(full_query),
-                {"article": db_article, "start_date": start_date_str, "ref_date": ref_date_str}
-            ).fetchall()
+            rows_raw = conn.execute(text(full_query)).fetchall()
+        app_logger.info(f"article_model_selection: query returned {len(rows_raw)} raw rows")
     except Exception as e:
-        app_logger.error(f"article_model_selection: DB error computing metrics: {e}")
+        # Log full traceback and a snippet of the failing query
+        query_snippet = full_query[:2000] + ('...' if len(full_query) > 2000 else '')
+        app_logger.error(
+            f"article_model_selection: DB error computing metrics: {e}\nQuery snippet:\n{query_snippet}",
+            exc_info=True
+        )
         return {"result": f"Ошибка при вычислении метрик: {e}"}
 
     # Filter out rows with no data, zero months, or non-finite values (NaN/Inf from division edge-cases)
@@ -893,6 +903,7 @@ Example: {{"article": "Торговая ДЗ", "months": 12}}
             continue
         results.append({"pipeline": r[0], "model": r[1], "mean_abs_rel_dev": val, "n_months": int(r[3])})
 
+    app_logger.info(f"article_model_selection: after filtering — {len(results)} valid combos remain")
     if not results:
         return {"result": f"Нет данных с фактом для статьи '{article}' за указанный период ({analysis_months} мес.)."}
 
