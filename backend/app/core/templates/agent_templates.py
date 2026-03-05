@@ -165,6 +165,12 @@ if "Previous Step Result" indicates an action was performed:
      - Summarize and report the warnings to the user (e.g. "Обратите внимание: в исторических данных найдены пропуски...").
    - IMPORTANT: DO NOT say "Forecast is ready" (Прогноз готов). The process is asynchronous.
 
+4. IF "Previous Step Result" contains "добавлены в базу знаний" (RAG update success):
+   - Confirm to the user in Russian that the file(s) were successfully added to the knowledge base.
+   - Mention the file name(s) and number of fragments if present in "Previous Step Result".
+   - Example: "Файл models.docx успешно добавлен в базу знаний (25 фрагментов). Теперь агент сможет использовать эти данные при ответах на вопросы."
+   - STOP here.
+
 If SQL Query was "NO_SQL" AND "Previous Step Result" is empty/insignificant:
 - If the user's question was a data request (e.g. "compare", "show") but NO_SQL was returned:
   - ASK FOR CLARIFICATION in Russian about what specific data or article is needed.
