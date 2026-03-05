@@ -6,6 +6,7 @@ from datetime import datetime
 from core.config import settings
 from core.logging_config import app_logger
 from core.nodes.shared_resources import llm, strip_think_tags
+from core.nodes.nwc_node import fetch_nwc_config
 
 # Node: Call NWC Train Service
 def call_nwc_train(state: dict):
@@ -103,6 +104,18 @@ def call_nwc_train(state: dict):
         if params.get("pipeline") == "MISSING":
              app_logger.info("call_nwc_train: pipeline MISSING, aborting train")
              return {"result": "Пожалуйста, уточните тип прогноза: BASE или BASE+?"}
+
+        # Replace __all__ with default_articles from NWC config
+        items = params.get("items", ["__all__"])
+        if items == ["__all__"]:
+            nwc_config = fetch_nwc_config(auth_token)
+            default_articles = nwc_config.get("default_articles", [])
+            if default_articles:
+                app_logger.info(f"call_nwc_train: replacing __all__ with {len(default_articles)} default_articles")
+                items = default_articles
+            else:
+                app_logger.warning("call_nwc_train: __all__ requested but default_articles not found in config, keeping __all__")
+        params["items"] = items
 
         # Prepare request
         url = f"{settings.nwc_service_url}/train/"
