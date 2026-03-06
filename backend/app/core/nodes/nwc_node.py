@@ -741,6 +741,8 @@ def article_model_selection(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     question = state.get("question", "")
     auth_token = state.get("auth_token")
+    history = state.get("chat_history", [])
+    history_str = json.dumps(history[-5:], ensure_ascii=False) if history else "[]"
 
     app_logger.info(f"article_model_selection: processing question='{question[:160]}'")
 
@@ -769,6 +771,9 @@ For the period:
 - "за N месяцев" → N
 - "за N года" / "за N лет" → N * 12
 - not specified → 12 (default)
+
+Chat history (last messages for context):
+{history_str}
 
 User message: "{question}"
 
