@@ -822,11 +822,17 @@ Example: {{"article": "Торговая ДЗ", "months": 12}}
         return {"result": "В таблице results_data не найдено столбцов с прогнозами (predict_*)."}
 
     # --- 4. Find reference date (latest date with fact for this article) ----
+    # Must filter by the same pipelines used in the UNION query, otherwise ref_date may come
+    # from a different pipeline where fact is populated further into the future.
     app_logger.info(f"article_model_selection: querying ref_date for db_article='{db_article}'")
     try:
         with engine.connect() as conn:
             res = conn.execute(
-                text("SELECT MAX(date) FROM results_data WHERE article = :article AND fact IS NOT NULL"),
+                text(
+                    "SELECT MAX(date) FROM results_data "
+                    "WHERE article = :article AND fact IS NOT NULL "
+                    "AND pipeline IN ('base', 'base+')"
+                ),
                 {"article": db_article}
             ).fetchone()
             ref_date_raw = res[0] if res else None
