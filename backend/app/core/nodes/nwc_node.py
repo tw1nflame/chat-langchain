@@ -816,7 +816,10 @@ Example: {{"article": "Торговая ДЗ", "months": 12}}
         app_logger.error(f"article_model_selection: schema inspection failed: {e}", exc_info=True)
         return {"result": "Не удалось получить схему таблицы results_data. Попробуйте позже."}
 
-    predict_cols = [(c, c[len("predict_"):]) for c in all_col_names if c.startswith("predict_")]
+    predict_cols = [
+        (c, c[len("predict_"):]) for c in all_col_names
+        if c.startswith("predict_") and not c.endswith("_diff") and not c.endswith("_pct")
+    ]
     app_logger.info(f"article_model_selection: predict_cols found ({len(predict_cols)}): {[c for c,_ in predict_cols]}")
     if not predict_cols:
         return {"result": "В таблице results_data не найдено столбцов с прогнозами (predict_*)."}
