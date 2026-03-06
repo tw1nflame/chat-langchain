@@ -830,7 +830,8 @@ Example: {{"article": "Торговая ДЗ", "months": 12}}
             res = conn.execute(
                 text(
                     "SELECT MAX(date) FROM results_data "
-                    "WHERE article = :article AND fact IS NOT NULL "
+                    "WHERE article = :article "
+                    "AND fact IS NOT NULL AND fact::text != 'NaN' "
                     "AND pipeline IN ('base', 'base+')"
                 ),
                 {"article": db_article}
@@ -876,7 +877,8 @@ Example: {{"article": "Торговая ДЗ", "months": 12}}
                 f"       COUNT(DISTINCT date) AS n_months\n"
                 f"FROM results_data\n"
                 f"WHERE article = '{safe_article}' AND pipeline = '{safe_pl}'\n"
-                f"  AND fact IS NOT NULL AND {col} IS NOT NULL\n"
+                f"  AND fact IS NOT NULL AND fact::text != 'NaN'\n"
+                f"  AND {col} IS NOT NULL AND {col}::text != 'NaN'\n"
                 f"  AND fact != 0\n"
                 f"  AND date > '{start_date_str}' AND date <= '{ref_date_str}'"
             )
