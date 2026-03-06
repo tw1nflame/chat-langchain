@@ -135,14 +135,6 @@ function LoginPage({ onLogin, onSwitchToRegister }) {
             </button>
           </div>
 
-          <div className="text-center text-sm text-gray-600">
-            <p>Для демонстрации используйте:</p>
-            <p className="font-mono text-xs bg-gray-100 p-2 rounded mt-1">
-              Email: user@example.com
-              <br />
-              Пароль: password
-            </p>
-          </div>
         </form>
       </div>
     </div>
