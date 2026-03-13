@@ -9,6 +9,7 @@
 
 # production
 /build
+logo.png
 
 # debug
 npm-debug.log*

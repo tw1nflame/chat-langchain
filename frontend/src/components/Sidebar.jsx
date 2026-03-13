@@ -19,6 +19,10 @@ function Sidebar({ chats, activeChat, onChatSelect, onNewChat, user, onLogout, o
 
   return (
     <div className="w-64 bg-gray-900 text-white flex flex-col overflow-x-hidden">
+      {/* Логотип */}
+      <div className="px-3 pt-3 pb-2">
+        <img src="/logo.png" alt="Logo" className="w-full object-contain" />
+      </div>
       {/* Информация о пользователе */}
       <div className="p-3 border-b border-gray-700">
         <div className="flex items-center justify-between mb-3">
