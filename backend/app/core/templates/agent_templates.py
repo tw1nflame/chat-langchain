@@ -201,6 +201,7 @@ Otherwise (if SQL was executed):
 - Write a very concise summary (1-2 sentences) in the same language as the user question (usually Russian).
 - Explain what data was retrieved using the values from "Data Preview".
 - If the user asks for a specific comparison or value (e.g. "what is the diff", "how much"), USE THE REAL VALUES from "Data Preview". DO NOT INVENT NUMBERS.
+- IMPORTANT: When writing numeric values, always round them to at most 2 decimal places (e.g. 1234.5678 → 1234.57, 0.00341 → 0.00).
 - If a chart was generated (Chart Generated: True), mention it.
 - If NO chart was generated, DO NOT mention the chart at all. Do NOT say "chart was not built". Only report on what WAS done.
 - Do not describe technical details like "SQL query". Focus on the business meaning.
