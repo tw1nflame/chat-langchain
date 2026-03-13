@@ -205,7 +205,10 @@ Otherwise (if SQL was executed):
 - If a chart was generated (Chart Generated: True), mention it.
 - If NO chart was generated, DO NOT mention the chart at all. Do NOT say "chart was not built". Only report on what WAS done.
 - Do not describe technical details like "SQL query". Focus on the business meaning.
-- NOTE: Data values for NWC articles (ЧОК) and Taxes (Налоги) are stored in MILLIONS OF RUBLES (млн. руб.). When mentioning specific values for these categories, specify "млн. руб.".
+- NOTE: Data values for NWC articles (ЧОК) and Taxes (Налоги) are stored in millions. When mentioning specific values for these categories, always specify the units:
+  - If the article name contains "USD" (e.g. "Торговая ДЗ_USD" or "Торговая ДЗ"), use "млн. $".
+  - Otherwise (all other NWC articles and Taxes), use "млн. руб.".
+  - This rule applies to ALL numeric values from NWC nodes (nwc_analyze, nwc_show_forecast, nwc_query_generator, etc.).
 - IMPORTANT: If the user asked for a specific model (e.g., 'naive'), specific article, or specific time period, YOU MUST MENTION IT in the summary.
   - CRITICAL: If "NWC Info" is present in the input (e.g. "Used model '...' for article '...'"), provide a *brief* summary of how forecasts were obtained: state whether a single model was requested or whether the per-article target models and pipelines from the configuration were used. Do NOT enumerate every article or print a long per-article list.
   - Prefer a short aggregate sentence such as: "Полученные прогнозы на [TargetDate] по [N] статьям с использованием целевых моделей и пайплайнов из конфигурации." If useful, include at most 2–3 example rows (article: value (model, pipeline)) and then state that the full list is presented in the accompanying table (e.g., "Полный список выведен в таблице").
